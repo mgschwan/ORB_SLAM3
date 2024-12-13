@@ -21,7 +21,9 @@
 #include "System.h"
 #include "Converter.h"
 #include <thread>
+#if MGSCHWAN_DISABLED
 #include <pangolin/pangolin.h>
+#endif
 #include <iomanip>
 #include <openssl/md5.h>
 #include <boost/serialization/base_object.hpp>
@@ -399,6 +401,7 @@ Sophus::SE3f System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const
 Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, const vector<IMU::Point>& vImuMeas, string filename)
 {
 
+
     {
         unique_lock<mutex> lock(mMutexReset);
         if(mbShutDown)
@@ -421,6 +424,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
     // Check mode change
     {
         unique_lock<mutex> lock(mMutexMode);
+
         if(mbActivateLocalizationMode)
         {
             mpLocalMapper->RequestStop();
@@ -434,6 +438,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
             mpTracker->InformOnlyTracking(true);
             mbActivateLocalizationMode = false;
         }
+
         if(mbDeactivateLocalizationMode)
         {
             mpTracker->InformOnlyTracking(false);
@@ -445,6 +450,8 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
     // Check reset
     {
         unique_lock<mutex> lock(mMutexReset);
+
+
         if(mbReset)
         {
             mpTracker->Reset();
@@ -465,10 +472,12 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
 
     Sophus::SE3f Tcw = mpTracker->GrabImageMonocular(imToFeed,timestamp,filename);
 
+
     unique_lock<mutex> lock2(mMutexState);
     mTrackingState = mpTracker->mState;
     mTrackedMapPoints = mpTracker->mCurrentFrame.mvpMapPoints;
     mTrackedKeyPointsUn = mpTracker->mCurrentFrame.mvKeysUn;
+
 
     return Tcw;
 }

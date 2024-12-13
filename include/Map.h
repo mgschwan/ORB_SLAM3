@@ -24,7 +24,13 @@
 #include "KeyFrame.h"
 
 #include <set>
+
+#if MGSCHWAN_DISABLED
 #include <pangolin/pangolin.h>
+#else
+#include <GL/glew.h>
+#endif
+
 #include <mutex>
 
 #include <boost/serialization/base_object.hpp>

@@ -18,7 +18,9 @@
 
 
 #include "Viewer.h"
+#if MGSCHWAN_DISABLED
 #include <pangolin/pangolin.h>
+#endif
 
 #include <mutex>
 
@@ -29,6 +31,7 @@ Viewer::Viewer(System* pSystem, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer
     both(false), mpSystem(pSystem), mpFrameDrawer(pFrameDrawer),mpMapDrawer(pMapDrawer), mpTracker(pTracking),
     mbFinishRequested(false), mbFinished(true), mbStopped(true), mbStopRequested(false)
 {
+#if MGSCHWAN_DISABLED
     if(settings){
         newParameterLoader(settings);
     }
@@ -53,9 +56,11 @@ Viewer::Viewer(System* pSystem, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer
     }
 
     mbStopTrack = false;
+#endif
 }
 
 void Viewer::newParameterLoader(Settings *settings) {
+#if MGSCHWAN_DISABLED    
     mImageViewerScale = 1.f;
 
     float fps = settings->fps();
@@ -72,10 +77,12 @@ void Viewer::newParameterLoader(Settings *settings) {
     mViewpointY = settings->viewPointY();
     mViewpointZ = settings->viewPointZ();
     mViewpointF = settings->viewPointF();
+#endif
 }
 
 bool Viewer::ParseViewerParamFile(cv::FileStorage &fSettings)
 {
+#if MGSCHWAN_DISABLED   
     bool b_miss_params = false;
     mImageViewerScale = 1.f;
 
@@ -157,12 +164,18 @@ bool Viewer::ParseViewerParamFile(cv::FileStorage &fSettings)
     }
 
     return !b_miss_params;
+#else
+    return true;
+#endif
+
 }
 
 void Viewer::Run()
 {
     mbFinished = false;
     mbStopped = false;
+
+#if MGSCHWAN_DISABLED
 
     pangolin::CreateWindowAndBind("ORB-SLAM3: Map Viewer",1024,768);
 
@@ -223,7 +236,12 @@ void Viewer::Run()
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        #ifdef MGSCHWAN_DISABLED
+
         mpMapDrawer->GetCurrentOpenGLCameraMatrix(Twc,Ow);
+        
+        #endif
+
 
         if(mbStopTrack)
         {
@@ -309,7 +327,13 @@ void Viewer::Run()
 
         d_cam.Activate(s_cam);
         glClearColor(1.0f,1.0f,1.0f,1.0f);
+
+        #if MGSCHWAN_DISABLED
+
         mpMapDrawer->DrawCurrentCamera(Twc);
+        
+        #endif
+
         if(menuShowKeyFrames || menuShowGraph || menuShowInertialGraph || menuShowOptLba)
             mpMapDrawer->DrawKeyFrames(menuShowKeyFrames,menuShowGraph, menuShowInertialGraph, menuShowOptLba);
         if(menuShowPoints)
@@ -381,47 +405,67 @@ void Viewer::Run()
     }
 
     SetFinish();
+
+#endif
+
 }
 
 void Viewer::RequestFinish()
 {
+#if MGSCHWAN_DISABLED
     unique_lock<mutex> lock(mMutexFinish);
     mbFinishRequested = true;
+#endif
 }
 
 bool Viewer::CheckFinish()
 {
+#if MGSCHWAN_DISABLED
     unique_lock<mutex> lock(mMutexFinish);
     return mbFinishRequested;
+#endif
 }
 
 void Viewer::SetFinish()
 {
+#if MGSCHWAN_DISABLED
     unique_lock<mutex> lock(mMutexFinish);
     mbFinished = true;
+#endif 
 }
 
 bool Viewer::isFinished()
 {
+#if MGSCHWAN_DISABLED
     unique_lock<mutex> lock(mMutexFinish);
     return mbFinished;
+#else
+    return false;
+#endif
 }
 
 void Viewer::RequestStop()
 {
+#if MGSCHWAN_DISABLED
     unique_lock<mutex> lock(mMutexStop);
     if(!mbStopped)
         mbStopRequested = true;
+#endif
 }
 
 bool Viewer::isStopped()
 {
+#if MGSCHWAN_DISABLED
     unique_lock<mutex> lock(mMutexStop);
     return mbStopped;
+#else
+    return false;
+#endif
 }
 
 bool Viewer::Stop()
 {
+#if MGSCHWAN_DISABLED
     unique_lock<mutex> lock(mMutexStop);
     unique_lock<mutex> lock2(mMutexFinish);
 
@@ -435,13 +479,18 @@ bool Viewer::Stop()
     }
 
     return false;
+#else
+    return false;
+#endif
 
 }
 
 void Viewer::Release()
 {
+#if MGSCHWAN_DISABLED
     unique_lock<mutex> lock(mMutexStop);
     mbStopped = false;
+#endif
 }
 
 /*void Viewer::SetTrackingPause()
