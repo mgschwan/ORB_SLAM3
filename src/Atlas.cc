@@ -301,7 +301,9 @@ bool Atlas::isImuInitialized()
 
 void Atlas::PreSave()
 {
+    cout << "PreSave" << endl;
     if(mpCurrentMap){
+        cout << "PreSave current map" << endl;
         if(!mspMaps.empty() && mnLastInitKFidMap < mpCurrentMap->GetMaxKFid())
             mnLastInitKFidMap = mpCurrentMap->GetMaxKFid()+1; //The init KF is the next of current maximum
     }
@@ -313,23 +315,35 @@ void Atlas::PreSave()
             return elem1->GetId() < elem2->GetId();
         }
     };
+
+    cout << "PreSave backup maps" << endl;
     std::copy(mspMaps.begin(), mspMaps.end(), std::back_inserter(mvpBackupMaps));
+    
+    cout << "PreSave sort" << endl;
     sort(mvpBackupMaps.begin(), mvpBackupMaps.end(), compFunctor());
 
+    cout << "Presave backup maps" << endl;
     std::set<GeometricCamera*> spCams(mvpCameras.begin(), mvpCameras.end());
     for(Map* pMi : mvpBackupMaps)
     {
+        cout << "Presave backup map: " << pMi->GetId() << endl;
         if(!pMi || pMi->IsBad())
             continue;
-
+        
+        cout << "Presave backup map: " << pMi->GetId() << " not bad" << endl;
         if(pMi->GetAllKeyFrames().size() == 0) {
+            cout << "Presave backup map: " << pMi->GetId() << " empty" << endl;
             // Empty map, erase before of save it.
             SetMapBad(pMi);
             continue;
         }
+        cout << "Presave backup map: " << pMi->GetId() << " not empty" << endl;
         pMi->PreSave(spCams);
+        cout << "Presave backup map: " << pMi->GetId() << " done" << endl;
     }
+    cout << "Presave backup maps done" << endl;
     RemoveBadMaps();
+    cout << "Presave remove bad maps done" << endl;
 }
 
 void Atlas::PostLoad()

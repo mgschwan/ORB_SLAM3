@@ -5,6 +5,8 @@
 #--------------------------------------------------------------------------------------------
 File.version: "1.0"
 
+loopClosing: 0
+
 Camera.type: "KannalaBrandt8"
 
 # Camera calibration and distortion parameters (OpenCV) 
@@ -62,3 +64,12 @@ Viewer.ViewpointX: 0.0
 Viewer.ViewpointY: -0.7
 Viewer.ViewpointZ: -3.5
 Viewer.ViewpointF: 500.0
+
+
+
+# If the LoadFile doesn't exist, the system give a message and create a new Atlas from scratch
+#System.LoadAtlasFromFile: "Session_Mgschwan_Mono"
+
+# The store file is created from the current session, if a file with the same name exists it is deleted
+#System.SaveAtlasToFile: "Session_MH01Mono"
+System.SaveAtlasToFile: "Session_Mgschwan_Mono"

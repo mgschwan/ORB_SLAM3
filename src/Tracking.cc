@@ -2475,13 +2475,19 @@ void Tracking::MonocularInitialization()
 
             mbReadyToInitializate = true;
 
+            cout << "Monocular Tracking ready to initialize" << endl;
+
             return;
+        } else {
+            cout << "Monocular Tracking not initialized and not enough keypoints" << endl;
         }
     }
     else
     {
         if (((int)mCurrentFrame.mvKeys.size()<=100)||((mSensor == System::IMU_MONOCULAR)&&(mLastFrame.mTimeStamp-mInitialFrame.mTimeStamp>1.0)))
         {
+            cout << "Monocular Tracking tried to initialize but not enough keypoints" << endl;
+
             mbReadyToInitializate = false;
 
             return;
@@ -2494,6 +2500,7 @@ void Tracking::MonocularInitialization()
         // Check if there are enough correspondences
         if(nmatches<100)
         {
+            cout << "Monocular Tracking tried to initialize but not enough matches" << endl;
             mbReadyToInitializate = false;
             return;
         }
@@ -2516,7 +2523,11 @@ void Tracking::MonocularInitialization()
             mInitialFrame.SetPose(Sophus::SE3f());
             mCurrentFrame.SetPose(Tcw);
 
+            cout << "Monocular Tracking initialized create initial map" << endl;
+
             CreateInitialMapMonocular();
+        } else {
+            cout << "Monocular Tracking tried to initialize but reconstruction failed" << endl;
         }
     }
 }
@@ -2525,6 +2536,7 @@ void Tracking::MonocularInitialization()
 
 void Tracking::CreateInitialMapMonocular()
 {
+    cout << "CreateInitialMapMonocular" << endl;
     // Create KeyFrames
     KeyFrame* pKFini = new KeyFrame(mInitialFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
     KeyFrame* pKFcur = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);

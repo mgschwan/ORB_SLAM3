@@ -131,6 +131,10 @@ ${PROJECT_SOURCE_DIR}/Thirdparty/g2o/lib/libg2o.so
 #Monocular examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Monocular)
 
-add_executable(mono_tum
-        Examples/Monocular/mono_tum.cc)
-target_link_libraries(mono_tum ${PROJECT_NAME} -lGL)
+add_executable(mono_tum_mgschwan
+        Examples/Monocular/mono_tum_mgschwan.cc)
+target_link_libraries(mono_tum_mgschwan ${PROJECT_NAME} -lGL)
+
+add_executable(remote_tum
+        Examples/Monocular/remote_tum.cc)
+target_link_libraries(remote_tum ${PROJECT_NAME} -lGL)

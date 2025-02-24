@@ -427,6 +427,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
 
         if(mbActivateLocalizationMode)
         {
+            cout << "Swithing to localization mode" << endl;
             mpLocalMapper->RequestStop();
 
             // Wait until Local Mapping has effectively stopped
@@ -441,6 +442,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
 
         if(mbDeactivateLocalizationMode)
         {
+            cout << "Swithing to mapping mode" << endl;
             mpTracker->InformOnlyTracking(false);
             mpLocalMapper->Release();
             mbDeactivateLocalizationMode = false;
@@ -531,7 +533,10 @@ void System::Shutdown()
     cout << "Shutdown" << endl;
 
     mpLocalMapper->RequestFinish();
+
+    cout << "Local mapper request finish" << endl;
     mpLoopCloser->RequestFinish();
+    cout << "Loop closer request finish" << endl;
     /*if(mpViewer)
     {
         mpViewer->RequestFinish();
@@ -539,25 +544,31 @@ void System::Shutdown()
             usleep(5000);
     }*/
 
+    cout << "Waiting for finishing" << endl;
+
     // Wait until all thread have effectively stopped
-    /*while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())
+    while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())
     {
         if(!mpLocalMapper->isFinished())
-            cout << "mpLocalMapper is not finished" << endl;*/
-        /*if(!mpLoopCloser->isFinished())
+            cout << "mpLocalMapper is not finished" << endl;
+        if(!mpLoopCloser->isFinished())
             cout << "mpLoopCloser is not finished" << endl;
         if(mpLoopCloser->isRunningGBA()){
             cout << "mpLoopCloser is running GBA" << endl;
             cout << "break anyway..." << endl;
             break;
-        }*/
-        /*usleep(5000);
-    }*/
+        }
+        usleep(5000);
+    }
+
+    cout << "All threads have been stopped" << endl;
 
     if(!mStrSaveAtlasToFile.empty())
     {
-        Verbose::PrintMess("Atlas saving to file " + mStrSaveAtlasToFile, Verbose::VERBOSITY_NORMAL);
+        cout << "Atlas saving to file " << mStrSaveAtlasToFile << endl;
+        //Verbose::PrintMess("Atlas saving to file " + mStrSaveAtlasToFile, Verbose::VERBOSITY_NORMAL);
         SaveAtlas(FileType::BINARY_FILE);
+        cout << "Atlas saved" << endl;
     }
 
     /*if(mpViewer)
@@ -1414,14 +1425,20 @@ void System::SaveAtlas(int type){
     {
         //clock_t start = clock();
 
+        cout << "Starting to save the atlas" << endl;
         // Save the current session
         mpAtlas->PreSave();
+        cout << "Pre save done" << endl;
+
 
         string pathSaveFileName = "./";
         pathSaveFileName = pathSaveFileName.append(mStrSaveAtlasToFile);
         pathSaveFileName = pathSaveFileName.append(".osa");
 
         string strVocabularyChecksum = CalculateCheckSum(mStrVocabularyFilePath,TEXT_FILE);
+
+        cout << "Vocabulary checksum: " << strVocabularyChecksum << endl;
+
         std::size_t found = mStrVocabularyFilePath.find_last_of("/\\");
         string strVocabularyName = mStrVocabularyFilePath.substr(found+1);
 
