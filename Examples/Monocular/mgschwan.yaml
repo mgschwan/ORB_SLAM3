@@ -68,8 +68,8 @@ Viewer.ViewpointF: 500.0
 
 
 # If the LoadFile doesn't exist, the system give a message and create a new Atlas from scratch
-System.LoadAtlasFromFile: "Session_Mgschwan_Mono2"
+#System.LoadAtlasFromFile: "Session_Mgschwan_Mono2"
 
 # The store file is created from the current session, if a file with the same name exists it is deleted
 #System.SaveAtlasToFile: "Session_mgschwan_calibrated"
-#System.SaveAtlasToFile: "Session_Mgschwan_Mono2"
+System.SaveAtlasToFile: "Session_Mgschwan_Mono2"

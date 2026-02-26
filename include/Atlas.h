@@ -139,6 +139,9 @@ public:
 
     long unsigned int GetNumLivedMP();
 
+    void SwitchToMap(int idx);
+
+
 protected:
 
     std::set<Map*> mspMaps;

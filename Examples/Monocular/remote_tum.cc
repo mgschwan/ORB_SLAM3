@@ -47,16 +47,20 @@ int main(int argc, char **argv)
 {
     if(argc < 4)
     {
-        cerr << endl << "Usage: ./mono_tum path_to_vocabulary path_to_settings camera_url [localize_only]" << endl;
+        cerr << endl << "Usage: ./mono_tum path_to_vocabulary path_to_settings camera_url [localize_only] [map_id]" << endl;
         return 1;
     }
 
     bool localizationMode = false;
-    if ( argc == 5 ) {
+    if ( argc >= 5 ) {
         localizationMode = true;
     }
-
     string strFile = string(argv[3]); 
+
+    int map_id = 0;
+    if ( argc >= 6 ) {
+        map_id = atoi(argv[5]);
+    }
 
     cv::VideoCapture cap;
     
@@ -70,12 +74,15 @@ int main(int argc, char **argv)
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
     ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::MONOCULAR,true);
+    ORB_SLAM3::Verbose::SetTh(ORB_SLAM3::Verbose::VERBOSITY_DEBUG);
     float imageScale = SLAM.GetImageScale();
 
     if (localizationMode) 
     {
         cout << "Activating localization mode" << endl;
+        SLAM.GetAtlas()->SwitchToMap(map_id);
         SLAM.ActivateLocalizationMode();
+        SLAM.ForceRelocalization();
     }
 
 
@@ -128,13 +135,18 @@ int main(int argc, char **argv)
         std::chrono::monotonic_clock::time_point t1 = std::chrono::monotonic_clock::now();
 #endif
 
-        cv::imwrite("/tmp/image.jpg", im);
+        //cv::imwrite("/tmp/image.jpg", im);
+
+        if (localizationMode) 
+        {
+            SLAM.ForceRelocalization();
+        }
 
         cout << "Track image" << endl;
         // Pass the image to the SLAM system
         Sophus::SE3f Tcw = SLAM.TrackMonocular(im, tframe);
 
-        cout << "Position " << Tcw.translation().transpose() << " Rotation" << Tcw.angleX() << "," << Tcw.angleY() << "," << Tcw.angleZ() <<  endl;
+        cout << "Position " << Tcw.translation().transpose() << " Rotation " << Tcw.angleX() << "," << Tcw.angleY() << "," << Tcw.angleZ() <<  endl;
 
 
 
@@ -147,6 +159,9 @@ int main(int argc, char **argv)
         double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();
 
     }
+
+    cout << "End of sequence reached. Waiting 5 seconds before closing everything." << endl;
+    usleep(5000000);
 
     // Stop all threads
     SLAM.Shutdown();

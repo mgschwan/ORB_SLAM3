@@ -1822,6 +1822,7 @@ void Tracking::Track()
             cerr << "ERROR: Frame with a timestamp older than previous frame detected!" << endl;
             unique_lock<mutex> lock(mMutexImuQueue);
             mlQueueImuData.clear();
+            cout << "Tracking:1825 - Reseting..." << endl;
             CreateMapInAtlas();
             return;
         }
@@ -1841,6 +1842,7 @@ void Tracking::Track()
                     }
                     else
                     {
+                        cout << "Tracking:1845 - Creating new map in the atlas" << endl;
                         CreateMapInAtlas();
                     }
                 }
@@ -2020,8 +2022,10 @@ void Tracking::Track()
                     {
                         mpSystem->ResetActiveMap();
                         Verbose::PrintMess("Reseting current map...", Verbose::VERBOSITY_NORMAL);
-                    }else
+                    }else{
+                        cout << "Tracking:2026 - Creating new map in the atlas" << endl;
                         CreateMapInAtlas();
+                    }
 
                     if(mpLastKeyFrame)
                         mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
@@ -2268,7 +2272,7 @@ void Tracking::Track()
         }
 
         // Reset if the camera get lost soon after initialization
-        if(mState==LOST)
+        if(mState==LOST && !mbOnlyTracking)
         {
             if(pCurrentMap->KeyFramesInMap()<=10)
             {
@@ -2283,6 +2287,7 @@ void Tracking::Track()
                     return;
                 }
 
+            cout << "Tracking:2290 - Creating new map in the atlas" << endl;
             CreateMapInAtlas();
 
             return;
@@ -2674,6 +2679,7 @@ void Tracking::CreateInitialMapMonocular()
 void Tracking::CreateMapInAtlas()
 {
     mnLastInitFrameId = mCurrentFrame.mnId;
+    cout << "Tracking:2677 CreateMapInAtlas" << endl;
     mpAtlas->CreateNewMap();
     if (mSensor==System::IMU_STEREO || mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_RGBD)
         mpAtlas->SetInertialSensor();
@@ -3792,12 +3798,12 @@ void Tracking::Reset(bool bLocMap)
 {
     Verbose::PrintMess("System Reseting", Verbose::VERBOSITY_NORMAL);
 
-    if(mpViewer)
-    {
-        mpViewer->RequestStop();
-        while(!mpViewer->isStopped())
-            usleep(3000);
-    }
+    // if(mpViewer)
+    // {
+    //     mpViewer->RequestStop();
+    //     while(!mpViewer->isStopped())
+    //         usleep(3000);
+    // }
 
     // Reset Local Mapping
     if (!bLocMap)
@@ -3843,8 +3849,8 @@ void Tracking::Reset(bool bLocMap)
     mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
     mvIniMatches.clear();
 
-    if(mpViewer)
-        mpViewer->Release();
+    // if(mpViewer)
+    //     mpViewer->Release();
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }
@@ -3852,13 +3858,14 @@ void Tracking::Reset(bool bLocMap)
 void Tracking::ResetActiveMap(bool bLocMap)
 {
     Verbose::PrintMess("Active map Reseting", Verbose::VERBOSITY_NORMAL);
-    if(mpViewer)
-    {
-        mpViewer->RequestStop();
-        while(!mpViewer->isStopped())
-            usleep(3000);
-    }
+    // if(mpViewer)
+    // {
+    //     mpViewer->RequestStop();
+    //     while(!mpViewer->isStopped())
+    //         usleep(3000);
+    // }
 
+    Verbose::PrintMess("   Reseting map " + to_string(mpAtlas->GetCurrentMap()->GetId()), Verbose::VERBOSITY_NORMAL);
     Map* pMap = mpAtlas->GetCurrentMap();
 
     if (!bLocMap)
@@ -3934,8 +3941,8 @@ void Tracking::ResetActiveMap(bool bLocMap)
 
     mbVelocity = false;
 
-    if(mpViewer)
-        mpViewer->Release();
+    // if(mpViewer)
+    //     mpViewer->Release();
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }

@@ -186,6 +186,10 @@ public:
 
     float GetImageScale();
 
+    Atlas* GetAtlas() { return mpAtlas; }
+
+    bool ForceRelocalization();
+
 #ifdef REGISTER_TIMES
     void InsertRectTime(double& time);
     void InsertResizeTime(double& time);

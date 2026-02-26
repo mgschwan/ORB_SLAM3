@@ -98,7 +98,7 @@ void LoopClosing::Run()
         //----------------------------
 
 
-        if(CheckNewKeyFrames())
+        if(CheckNewKeyFrames() && mbActiveLC)
         {
             if(mpLastCurrentKF)
             {

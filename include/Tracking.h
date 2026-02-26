@@ -108,6 +108,9 @@ public:
 
     float GetImageScale();
 
+    bool ForceRelocalization() { mState = LOST; return true; }
+
+
 #ifdef REGISTER_LOOP
     void RequestStop();
     bool isStopped();

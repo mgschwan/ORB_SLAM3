@@ -359,26 +359,34 @@ void Map::SetLastMapChange(int currentChangeId)
 void Map::PreSave(std::set<GeometricCamera*> &spCams)
 {
     int nMPWithoutObs = 0;
+    //cout << "Map::PreSave() with " << mspMapPoints.size() << " map points and " << mspKeyFrames.size() << " keyframes" << endl;
     for(MapPoint* pMPi : mspMapPoints)
     {
         if(!pMPi || pMPi->isBad())
             continue;
+        //cout << "Map::PreSave() map point " << pMPi->mnId << " with " << pMPi->GetObservations().size() << " observations" << endl;
 
         if(pMPi->GetObservations().size() == 0)
         {
             nMPWithoutObs++;
         }
+
+        //cout << "Map::PreSave() map point " << pMPi->mnId << " removing bad observations" << endl;
         map<KeyFrame*, std::tuple<int,int>> mpObs = pMPi->GetObservations();
         for(map<KeyFrame*, std::tuple<int,int>>::iterator it= mpObs.begin(), end=mpObs.end(); it!=end; ++it)
         {
-            if(it->first->GetMap() != this || it->first->isBad())
+            //cout << "Map::PreSave() map point " << pMPi->mnId << " erasing observation in KF " << it->first->mnId << endl;
+            if(it->first != NULL && ( it->first->GetMap() != this || it->first->isBad() ) )
             {
+                //cout << "Map::PreSave() map point " << pMPi->mnId << " erasing observation in bad KF " << it->first->mnId << endl;
                 pMPi->EraseObservation(it->first);
             }
-
         }
+        usleep(5000);
+        // cout << "Map::PreSave() map point " << pMPi->mnId << " done" << endl;
     }
 
+    cout << "Map::PreSave() after removing observations, " << nMPWithoutObs << " map points without observations" << endl;
     // Saves the id of KF origins
     mvBackupKeyFrameOriginsId.clear();
     mvBackupKeyFrameOriginsId.reserve(mvpKeyFrameOrigins.size());
@@ -386,7 +394,7 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
     {
         mvBackupKeyFrameOriginsId.push_back(mvpKeyFrameOrigins[i]->mnId);
     }
-
+    cout << "Map::PreSave() " << mvBackupKeyFrameOriginsId.size() << " KF origins" << endl;
 
     // Backup of MapPoints
     mvpBackupMapPoints.clear();
@@ -399,6 +407,7 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
         pMPi->PreSave(mspKeyFrames,mspMapPoints);
     }
 
+    cout << "Map::PreSave() " << mvpBackupMapPoints.size() << " map points" << endl;
     // Backup of KeyFrames
     mvpBackupKeyFrames.clear();
     for(KeyFrame* pKFi : mspKeyFrames)
@@ -410,17 +419,20 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
         pKFi->PreSave(mspKeyFrames,mspMapPoints, spCams);
     }
 
+    cout << "Map::PreSave() " << mvpBackupKeyFrames.size() << " keyframes" << endl;
     mnBackupKFinitialID = -1;
     if(mpKFinitial)
     {
         mnBackupKFinitialID = mpKFinitial->mnId;
     }
 
+    cout << "Map::PreSave() initial KF id: " << mnBackupKFinitialID << endl;
     mnBackupKFlowerID = -1;
     if(mpKFlowerID)
     {
         mnBackupKFlowerID = mpKFlowerID->mnId;
     }
+    cout << "Map::PreSave() done" << endl;
 
 }
 

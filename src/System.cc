@@ -105,6 +105,9 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     if(!node.empty())
     {
         activeLC = static_cast<int>(fsSettings["loopClosing"]) != 0;
+        cout << "loopClosing found in settings file. Using value: " << activeLC << endl;
+    } else {
+        cout << "loopClosing not found in settings file. Using default value: true" << endl;
     }
 
     mStrVocabularyFilePath = strVocFile;
@@ -427,7 +430,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
 
         if(mbActivateLocalizationMode)
         {
-            cout << "Swithing to localization mode" << endl;
+            cout << "Switching to localization mode" << endl;
             mpLocalMapper->RequestStop();
 
             // Wait until Local Mapping has effectively stopped
@@ -472,8 +475,9 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
         for(size_t i_imu = 0; i_imu < vImuMeas.size(); i_imu++)
             mpTracker->GrabImuData(vImuMeas[i_imu]);
 
+    cout << "TrackMonocular: calling GrabImageMonocular()" << endl;
     Sophus::SE3f Tcw = mpTracker->GrabImageMonocular(imToFeed,timestamp,filename);
-
+    cout << "TrackMonocular: out of GrabImageMonocular()" << endl;
 
     unique_lock<mutex> lock2(mMutexState);
     mTrackingState = mpTracker->mState;
@@ -1338,6 +1342,15 @@ void System::SaveDebugData(const int &initIdx)
 }
 
 
+bool System::ForceRelocalization()
+{
+    if(!mpTracker)
+        return false;
+
+    unique_lock<mutex> lock(mMutexState);
+    return mpTracker->ForceRelocalization();    
+}
+
 int System::GetTrackingState()
 {
     unique_lock<mutex> lock(mMutexState);
@@ -1392,6 +1405,7 @@ void System::ChangeDataset()
     }
     else
     {
+        cout << "System:1408: Creating new map in the atlas" << endl;
         mpTracker->CreateMapInAtlas();
     }
 

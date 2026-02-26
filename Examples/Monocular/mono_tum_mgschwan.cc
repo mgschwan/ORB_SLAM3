@@ -54,20 +54,25 @@ int main(int argc, char **argv)
     LoadImages(strFile, vstrImageFilenames, vTimestamps);
 
 
-
-    int nImages = vstrImageFilenames.size();
+      int nImages = vstrImageFilenames.size();
     cout << "Number of images: " << nImages << endl;
     cout << "Initializing ORB-SLAM3" << endl;
 
+
+
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
     ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::MONOCULAR,true);
-    float imageScale = SLAM.GetImageScale();
 
+    //ORB_SLAM3::Verbose::SetTh(ORB_SLAM3::Verbose::VERBOSITY_DEBUG);
+
+    float imageScale = SLAM.GetImageScale();
 
     if (localizationMode) 
     {
         cout << "Activating localization mode" << endl;
+        SLAM.GetAtlas()->SwitchToMap(0);
         SLAM.ActivateLocalizationMode();
+        SLAM.ForceRelocalization();
     }
 
 
@@ -83,11 +88,13 @@ int main(int argc, char **argv)
     double t_resize = 0.f;
     double t_track = 0.f;
 
+
+
     // Main loop
     cv::Mat im;
     for(int ni=0; ni<nImages; ni++)
     {
-
+   
         cout << "Read image at: " << vstrImageFilenames[ni] << endl;
         // Read image from file
         im = cv::imread(strPath+vstrImageFilenames[ni],cv::IMREAD_UNCHANGED); //,cv::IMREAD_UNCHANGED);
@@ -131,11 +138,11 @@ int main(int argc, char **argv)
         std::chrono::monotonic_clock::time_point t1 = std::chrono::monotonic_clock::now();
 #endif
 
-        cout << "Track image" << endl;
+        //cout << "Track image" << endl;
         // Pass the image to the SLAM system
         Sophus::SE3f Tcw = SLAM.TrackMonocular(im,0); //tframe);
 
-        cout << "Position " << Tcw.translation().transpose() << " Rotation" << Tcw.angleX() << "," << Tcw.angleY() << "," << Tcw.angleZ() <<  endl;
+        cout << "Position " << Tcw.translation().transpose() << " Rotation " << Tcw.angleX() << "," << Tcw.angleY() << "," << Tcw.angleZ() <<  endl;
 
 
 
