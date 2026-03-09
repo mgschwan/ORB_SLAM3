@@ -1,4 +1,4 @@
-# Project Summary - ORB_SLAM3 Modified
+    # Project Summary - ORB_SLAM3 Modified
 
 This project is a modified version of ORB-SLAM3. The primary goals of the modifications were to remove the mandatory dependency on Pangolin (for visualization) and to improve the "localization only" mode for robust use in pre-mapped environments.
 

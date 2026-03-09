@@ -138,3 +138,7 @@ target_link_libraries(mono_tum_mgschwan ${PROJECT_NAME} -lGL)
 add_executable(remote_tum
         Examples/Monocular/remote_tum.cc)
 target_link_libraries(remote_tum ${PROJECT_NAME} -lGL)
+
+add_executable(inspect_osa
+        Examples/Monocular/inspect_osa.cc)
+target_link_libraries(inspect_osa ${PROJECT_NAME} -lGL -lboost_serialization)
