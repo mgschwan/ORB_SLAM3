@@ -190,6 +190,8 @@ public:
 
     bool ForceRelocalization();
 
+    void SwitchToMap(int idx);
+
 #ifdef REGISTER_TIMES
     void InsertRectTime(double& time);
     void InsertResizeTime(double& time);

@@ -495,7 +495,9 @@ void KeyFrame::ChangeParent(KeyFrame *pKF)
     }
 
     mpParent = pKF;
-    pKF->AddChild(this);
+    if (pKF) {
+        pKF->AddChild(this);
+    }
 }
 
 set<KeyFrame*> KeyFrame::GetChilds()

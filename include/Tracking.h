@@ -110,6 +110,18 @@ public:
 
     bool ForceRelocalization() { mState = LOST; return true; }
 
+    void InformMapSwitch() {
+        mState = RECENTLY_LOST;
+        mTimeStampLost = mCurrentFrame.mTimeStamp;
+        mbVelocity = false;
+        mbVO = false;
+        
+        // Clear local mapping variables
+        mvpLocalKeyFrames.clear();
+        mvpLocalMapPoints.clear();
+        mpReferenceKF = nullptr;
+        mpLastKeyFrame = nullptr;
+    }
 
 #ifdef REGISTER_LOOP
     void RequestStop();

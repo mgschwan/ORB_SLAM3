@@ -1351,6 +1351,41 @@ bool System::ForceRelocalization()
     return mpTracker->ForceRelocalization();    
 }
 
+void System::SwitchToMap(int idx)
+{
+    unique_lock<mutex> lock(mMutexMode);
+    
+    bool was_running = !mpLocalMapper->isStopped();
+    if (was_running) {
+        // Drain the LocalMapper queue first! 
+        // This ensures all KeyFrames tracked in the old map are properly integrated
+        // into the old map before we switch mpCurrentMap.
+        while(mpLocalMapper->KeyframesInQueue() > 0) {
+            usleep(1000);
+        }
+        
+        mpLocalMapper->RequestStop();
+        while(!mpLocalMapper->isStopped() && !mpLocalMapper->isFinished()) {
+            usleep(1000);
+        }
+    }
+    
+    mpAtlas->SwitchToMap(idx);
+    
+    Map* pNewMap = mpAtlas->GetCurrentMap();
+    if (pNewMap->KeyFramesInMap() == 0) {
+        // It's an empty map. Reset tracker to initialize.
+        mpTracker->mState = Tracking::NO_IMAGES_YET;
+    } else {
+        // It's a populated map. Inform the tracker so it can relocalize into the new map.
+        mpTracker->InformMapSwitch();
+    }
+
+    if (was_running) {
+        mpLocalMapper->Release();
+    }
+}
+
 int System::GetTrackingState()
 {
     unique_lock<mutex> lock(mMutexState);
