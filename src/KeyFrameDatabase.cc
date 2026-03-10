@@ -745,13 +745,16 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F, Map
             for(list<KeyFrame*>::iterator lit=lKFs.begin(), lend= lKFs.end(); lit!=lend; lit++)
             {
                 KeyFrame* pKFi=*lit;
-                if(pKFi->mnRelocQuery!=F->mnId)
+                if(pKFi->GetMap() == pMap)
                 {
-                    pKFi->mnRelocWords=0;
-                    pKFi->mnRelocQuery=F->mnId;
-                    lKFsSharingWords.push_back(pKFi);
+                    if(pKFi->mnRelocQuery!=F->mnId)
+                    {
+                        pKFi->mnRelocWords=0;
+                        pKFi->mnRelocQuery=F->mnId;
+                        lKFsSharingWords.push_back(pKFi);
+                    }
+                    pKFi->mnRelocWords++;
                 }
-                pKFi->mnRelocWords++;
             }
         }
     }
@@ -831,8 +834,6 @@ vector<KeyFrame*> KeyFrameDatabase::DetectRelocalizationCandidates(Frame *F, Map
         if(si>minScoreToRetain)
         {
             KeyFrame* pKFi = it->second;
-            if (pKFi->GetMap() != pMap)
-                continue;
             if(!spAlreadyAddedKF.count(pKFi))
             {
                 vpRelocCandidates.push_back(pKFi);

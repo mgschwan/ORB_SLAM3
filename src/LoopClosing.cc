@@ -97,8 +97,20 @@ void LoopClosing::Run()
         //NEW LOOP AND MERGE DETECTION ALGORITHM
         //----------------------------
 
-
-        if(CheckNewKeyFrames() && mbActiveLC)
+        if (CheckNewKeyFrames() && !mbActiveLC)
+        {
+            // If Loop Closing is disabled, we still need to pop from the queue
+            // and add KeyFrames to the database so Relocalization works!
+            {
+                unique_lock<mutex> lock(mMutexLoopQueue);
+                mpCurrentKF = mlpLoopKeyFrameQueue.front();
+                mlpLoopKeyFrameQueue.pop_front();
+            }
+            if(!mpCurrentKF->isBad()) {
+                mpKeyFrameDB->add(mpCurrentKF);
+            }
+        }
+        else if(CheckNewKeyFrames() && mbActiveLC)
         {
             if(mpLastCurrentKF)
             {
@@ -323,10 +335,6 @@ bool LoopClosing::CheckNewKeyFrames()
 
 bool LoopClosing::NewDetectCommonRegions()
 {
-    // To deactivate placerecognition. No loopclosing nor merging will be performed
-    if(!mbActiveLC)
-        return false;
-
     {
         unique_lock<mutex> lock(mMutexLoopQueue);
         mpCurrentKF = mlpLoopKeyFrameQueue.front();
@@ -336,6 +344,13 @@ bool LoopClosing::NewDetectCommonRegions()
         mpCurrentKF->mbCurrentPlaceRecognition = true;
 
         mpLastMap = mpCurrentKF->GetMap();
+    }
+
+    // To deactivate placerecognition. No loopclosing nor merging will be performed
+    if(!mbActiveLC) {
+        mpKeyFrameDB->add(mpCurrentKF);
+        mpCurrentKF->SetErase();
+        return false;
     }
 
     if(mpLastMap->IsInertial() && !mpLastMap->GetIniertialBA2())

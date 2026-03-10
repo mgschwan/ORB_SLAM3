@@ -210,6 +210,10 @@ int main(int argc, char **argv)
                                 }
                                 cout << ">>> [Web] Switched to Map ID: " << new_map_id << " <<<" << endl;
                             }
+                        } else if (req.find("GET /newmap") != std::string::npos) {
+                            SLAM.GetAtlas()->CreateNewMap();
+                            SLAM.SwitchToMap(SLAM.GetAtlas()->CountMaps() - 1);
+                            cout << ">>> [Web] Created and switched to New Map <<<" << endl;
                         }
                         
                         std::string mode_str = localizationMode ? "Localization" : "Mapping";
@@ -267,6 +271,9 @@ int main(int argc, char **argv)
                                            pause_btn +
                                            "</div><hr><h3>Available Maps</h3><div>" +
                                            map_buttons +
+                                           "</div>" +
+                                           "<div style=\"margin-top:20px;\">" +
+                                           "<a href=\"/newmap\" class=\"btn\" style=\"background:#ffc107;color:#333;\">Create New Map</a>" +
                                            "</div>" +
                                            "<p style=\"margin-top:20px;font-size:12px;color:#777;\">Refresh page to update current status.</p>" +
                                            "</div></body></html>";

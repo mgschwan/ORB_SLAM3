@@ -2015,24 +2015,13 @@ void Tracking::Track()
                 }
                 else if (mState == LOST)
                 {
-
-                    Verbose::PrintMess("A new map is started...", Verbose::VERBOSITY_NORMAL);
-
-                    if (pCurrentMap->KeyFramesInMap()<10)
-                    {
-                        mpSystem->ResetActiveMap();
-                        Verbose::PrintMess("Reseting current map...", Verbose::VERBOSITY_NORMAL);
-                    }else{
-                        cout << "Tracking:2026 - Creating new map in the atlas" << endl;
-                        CreateMapInAtlas();
+                    // MODIFIED: Do not automatically create a new map.
+                    // Instead, continuously try to relocalize in the current map.
+                    Verbose::PrintMess("State is LOST. Continuously trying to relocalize...", Verbose::VERBOSITY_NORMAL);
+                    bOK = Relocalization();
+                    if (!bOK) {
+                        return;
                     }
-
-                    if(mpLastKeyFrame)
-                        mpLastKeyFrame = static_cast<KeyFrame*>(NULL);
-
-                    Verbose::PrintMess("done", Verbose::VERBOSITY_NORMAL);
-
-                    return;
                 }
             }
 
@@ -2287,8 +2276,9 @@ void Tracking::Track()
                     return;
                 }
 
-            cout << "Tracking:2290 - Creating new map in the atlas" << endl;
-            CreateMapInAtlas();
+            // MODIFIED: Do not automatically create a new map
+            // cout << "Tracking:2290 - Creating new map in the atlas" << endl;
+            // CreateMapInAtlas();
 
             return;
         }
