@@ -68,7 +68,21 @@ int main(int argc, char **argv)
 
     cv::VideoCapture cap;
     
-    cap.open(strFile);
+    bool is_number = true;
+    for(char c : strFile) {
+        if(!isdigit(c)) {
+            is_number = false;
+            break;
+        }
+    }
+    
+    if(is_number) {
+        cap.open(stoi(strFile), cv::CAP_V4L2);
+    } else if (strFile.find("/dev/video") == 0) {
+        cap.open(strFile, cv::CAP_V4L2);
+    } else {
+        cap.open(strFile);
+    }
 
 
 
