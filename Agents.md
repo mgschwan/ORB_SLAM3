@@ -115,7 +115,13 @@ ORB_SLAM3/
 - **Map Preservation:** In the original ORB-SLAM3, if localization failed for a certain period, the system would often create a new map. This behavior has been disabled when `mbOnlyTracking` (Localization Mode) is active.
 - **Persistent Relocalization:** When in localization mode, if the system loses track, it will now continuously attempt to relocalize against the existing map rather than starting a new one.
 - **Manual Control:** Added `System::ForceRelocalization()` which sets the tracking state to `LOST`, triggering the relocalization logic.
-- **Map Management:** Added `Atlas::SwitchToMap(int idx)` to allow programmatically switching between different maps in the Atlas.
+- **Map Management:** Added `System::SwitchToMap(int idx)` to allow programmatically switching between different maps in the Atlas. This safely drains the `LocalMapping` queue, updates the Atlas, and instructs the Tracking thread to reset its state and relocalize without memory corruption.
+
+### 3. Relocalization and Mapping Stability Fixes
+- **Persistent Mapping Relocalization:** The automatic map creation feature when the system loses tracking in Mapping Mode has been heavily suppressed. It now continuously runs `Relocalization()` and tries to find its place in the current active map, mimicking Localization Mode's tenacity, instead of eagerly creating fragmented new maps.
+- **KeyFrameDatabase Scope Accuracy:** Fixed a severe bug in `KeyFrameDatabase::DetectRelocalizationCandidates` that allowed Bag-of-Words queries to cross-pollinate with scores from inactive maps. It now properly bounds word scoring to the active map, allowing successful relocalization after switching maps.
+- **Robust LoopClosing:** Ensured `LoopClosing::Run()` still correctly harvests and inserts newly generated `KeyFrames` into the `KeyFrameDatabase` even if the `loopClosing: 0` flag is set in the config. This prevents the database from remaining entirely empty and bricking relocalization functionality.
+- **KeyFrame Culling Safety:** Hardened `KeyFrame::ChangeParent` to tolerate empty spanning trees/deleted parents, mitigating segmentation faults when the local map culler prunes bad KeyFrames post-map-swap.
 
 ## Deeper Inspection: Tracking Logic
 
@@ -161,16 +167,16 @@ When activated via `SLAM.ActivateLocalizationMode()`:
     - A "representative" descriptor (chosen from all observations).
 - **`Atlas`**: The multi-map manager. It contains a set of `Map` objects. Only one map is "current" at a time.
 
-### 3. New Executables (Examples/Monocular)
+### 4. New Executables (Examples/Monocular)
 - **`mono_tum_mgschwan.cc`**: 
     - Supports an optional `localize_only` command-line argument.
     - Specifically designed to work with TUM dataset format but with the improved localization logic.
 - **`remote_tum.cc`**:
-    - Uses `cv::VideoCapture` to process streams from a URL (e.g., IP camera, MJPEG stream).
-    - Supports localization mode and manual map selection via `map_id`.
-    - Automatically calls `ForceRelocalization()` when starting in localization mode.
+    - Uses `cv::VideoCapture` to process streams from a URL (e.g., IP camera, MJPEG stream). Now also handles local V4L2 device formats directly (e.g., `/dev/video0`).
+    - Acts as an asynchronous Web Interface for manual control over SLAM operations.
+    - Features endpoints for REST API Status (`/api/status`) serving JSON variables, action endpoints (`/pause`, `/resume`, `/newmap`, `/switchmap?id=X`), and safely serves static frontend assets (HTML, CSS, JS) directly out of `Examples/Monocular/html/`.
 
-### 4. Configuration & Settings
+### 5. Configuration & Settings
 - **Loop Closing Toggle:** Added support for a `loopClosing` flag in the YAML settings file to enable/disable the Loop Closing thread.
 - **Image Scaling:** Improved handling of image scaling in the examples to match the SLAM system's expectations.
 
@@ -180,7 +186,7 @@ When activated via `SLAM.ActivateLocalizationMode()`:
 To activate the improved localization mode in your code:
 ```cpp
 SLAM.ActivateLocalizationMode();
-SLAM.GetAtlas()->SwitchToMap(map_id); // Optional: Switch to a specific saved map
+SLAM.SwitchToMap(map_id);            // Optional: Safely switch to a specific saved map
 SLAM.ForceRelocalization();          // Force the system to start searching in the map
 ```
 
@@ -188,10 +194,15 @@ SLAM.ForceRelocalization();          // Force the system to start searching in t
 The core change preventing new map creation is in `Tracking::Track()`:
 ```cpp
 // Original logic would create a new map if lost
-if(mState==LOST && !mbOnlyTracking) // Added !mbOnlyTracking check
+else if (mState == LOST)
 {
-    // ...
-    CreateMapInAtlas();
+    // MODIFIED: Do not automatically create a new map.
+    // Instead, continuously try to relocalize in the current map.
+    Verbose::PrintMess("State is LOST. Continuously trying to relocalize...", Verbose::VERBOSITY_NORMAL);
+    bOK = Relocalization();
+    if (!bOK) {
+        return;
+    }
 }
 ```
 

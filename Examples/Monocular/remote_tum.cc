@@ -38,6 +38,12 @@
 bool running = true;
 bool paused = false;
 
+// Global pose variables for SSE streaming
+std::mutex pose_mutex;
+float g_pose_x = 0, g_pose_y = 0, g_pose_z = 0;
+float g_pose_qx = 0, g_pose_qy = 0, g_pose_qz = 0, g_pose_qw = 1;
+bool g_pose_valid = false;
+
 //signal handler
 void sigint_handler(int sig)
 {
@@ -178,7 +184,85 @@ int main(int argc, char **argv)
                     int valread = read(new_socket, buffer, 1024);
                     if (valread > 0) {
                         std::string req(buffer);
-                        if (req.find("GET /loc") != std::string::npos) {
+                        
+                        // Default to serving index.html
+                        std::string response;
+                        
+                        if (req.find("GET /api/stream/pose") != std::string::npos) {
+                            // Launch detached thread for Server-Sent Events (SSE)
+                            std::thread sse_thread([new_socket]() {
+                                std::string headers = "HTTP/1.1 200 OK\r\n"
+                                                      "Content-Type: text/event-stream\r\n"
+                                                      "Cache-Control: no-cache\r\n"
+                                                      "Connection: keep-alive\r\n"
+                                                      "Access-Control-Allow-Origin: *\r\n\r\n";
+                                
+                                // Ignore SIGPIPE on Linux so write doesn't crash the program if client disconnects
+                                signal(SIGPIPE, SIG_IGN);
+
+                                if (write(new_socket, headers.c_str(), headers.length()) < 0) {
+                                    close(new_socket);
+                                    return;
+                                }
+
+                                while (running) {
+                                    std::string json;
+                                    {
+                                        std::lock_guard<std::mutex> lock(pose_mutex);
+                                        if (g_pose_valid) {
+                                            json = "data: {\"valid\":true,\"x\":" + std::to_string(g_pose_x) + 
+                                                   ",\"y\":" + std::to_string(g_pose_y) + 
+                                                   ",\"z\":" + std::to_string(g_pose_z) + 
+                                                   ",\"qx\":" + std::to_string(g_pose_qx) + 
+                                                   ",\"qy\":" + std::to_string(g_pose_qy) + 
+                                                   ",\"qz\":" + std::to_string(g_pose_qz) + 
+                                                   ",\"qw\":" + std::to_string(g_pose_qw) + "}\n\n";
+                                        } else {
+                                            json = "data: {\"valid\":false}\n\n";
+                                        }
+                                    }
+                                    
+                                    if (write(new_socket, json.c_str(), json.length()) < 0) {
+                                        // Client disconnected or socket error
+                                        break;
+                                    }
+                                    
+                                    usleep(33000); // ~30 fps
+                                }
+                                close(new_socket);
+                            });
+                            sse_thread.detach();
+                            continue; // Do not close socket here, the detached thread handles it
+                        }
+                        else if (req.find("GET /api/status") != std::string::npos) {
+                            long unsigned int current_map_id = 0;
+                            if(SLAM.GetAtlas()->GetCurrentMap()) {
+                                current_map_id = SLAM.GetAtlas()->GetCurrentMap()->GetId();
+                            }
+
+                            std::string json = "{";
+                            json += "\"localizationMode\": " + std::string(localizationMode ? "true" : "false") + ",";
+                            json += "\"paused\": " + std::string(paused ? "true" : "false") + ",";
+                            json += "\"currentMapId\": " + std::to_string(current_map_id) + ",";
+                            json += "\"maps\": [";
+                            
+                            std::vector<ORB_SLAM3::Map*> maps = SLAM.GetAtlas()->GetAllMaps();
+                            bool first = true;
+                            for (ORB_SLAM3::Map* pMap : maps) {
+                                if (!pMap) continue;
+                                if (!first) json += ",";
+                                json += "{";
+                                json += "\"id\": " + std::to_string(pMap->GetId()) + ",";
+                                json += "\"keyframes\": " + std::to_string(pMap->KeyFramesInMap()) + ",";
+                                json += "\"mappoints\": " + std::to_string(pMap->MapPointsInMap());
+                                json += "}";
+                                first = false;
+                            }
+                            json += "]}";
+
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
+                        } 
+                        else if (req.find("GET /loc ") != std::string::npos) {
                             if (!localizationMode) {
                                 localizationMode = true;
                                 SLAM.GetAtlas()->SwitchToMap(map_id);
@@ -186,18 +270,22 @@ int main(int argc, char **argv)
                                 SLAM.ForceRelocalization();
                                 cout << ">>> [Web] Switched to Localization Mode <<<" << endl;
                             }
-                        } else if (req.find("GET /map") != std::string::npos) {
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                        } else if (req.find("GET /map ") != std::string::npos) {
                             if (localizationMode) {
                                 localizationMode = false;
                                 SLAM.DeactivateLocalizationMode();
                                 cout << ">>> [Web] Switched to Mapping Mode <<<" << endl;
                             }
-                        } else if (req.find("GET /pause") != std::string::npos) {
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                        } else if (req.find("GET /pause ") != std::string::npos) {
                             paused = true;
                             cout << ">>> [Web] Paused Processing <<<" << endl;
-                        } else if (req.find("GET /resume") != std::string::npos) {
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                        } else if (req.find("GET /resume ") != std::string::npos) {
                             paused = false;
                             cout << ">>> [Web] Resumed Processing <<<" << endl;
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
                         } else if (req.find("GET /switchmap?id=") != std::string::npos) {
                             size_t pos = req.find("GET /switchmap?id=");
                             size_t end_pos = req.find(" HTTP", pos);
@@ -210,74 +298,51 @@ int main(int argc, char **argv)
                                 }
                                 cout << ">>> [Web] Switched to Map ID: " << new_map_id << " <<<" << endl;
                             }
-                        } else if (req.find("GET /newmap") != std::string::npos) {
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                        } else if (req.find("GET /newmap ") != std::string::npos) {
                             SLAM.GetAtlas()->CreateNewMap();
                             SLAM.SwitchToMap(SLAM.GetAtlas()->CountMaps() - 1);
                             cout << ">>> [Web] Created and switched to New Map <<<" << endl;
-                        }
-                        
-                        std::string mode_str = localizationMode ? "Localization" : "Mapping";
-                        
-                        long unsigned int current_map_id = 0;
-                        if(SLAM.GetAtlas()->GetCurrentMap()) {
-                            current_map_id = SLAM.GetAtlas()->GetCurrentMap()->GetId();
-                        }
-
-                        std::string map_buttons = "<table style=\"margin:auto;border-collapse:collapse;width:100%;text-align:center;\">"
-                                                  "<tr><th>Map ID</th><th>KeyFrames</th><th>MapPoints</th><th>Action</th></tr>";
-                        
-                        std::vector<ORB_SLAM3::Map*> maps = SLAM.GetAtlas()->GetAllMaps();
-                        int map_idx = 0;
-                        for (ORB_SLAM3::Map* pMap : maps) {
-                            if (!pMap) continue;
-                            long unsigned int id = pMap->GetId();
-                            long unsigned int kfs = pMap->KeyFramesInMap();
-                            long unsigned int mps = pMap->MapPointsInMap();
-                            
-                            std::string row_style = (id == current_map_id) ? "background:#e8f4f8;font-weight:bold;" : "";
-                            
-                            map_buttons += "<tr style=\"" + row_style + "border-bottom:1px solid #ddd;\">"
-                                           "<td style=\"padding:10px;\">" + std::to_string(id) + (id == current_map_id ? " (Active)" : "") + "</td>"
-                                           "<td>" + std::to_string(kfs) + "</td>"
-                                           "<td>" + std::to_string(mps) + "</td>"
-                                           "<td>";
-                            
-                            if (id != current_map_id) {
-                                map_buttons += "<a href=\"/switchmap?id=" + std::to_string(map_idx) + "\" class=\"btn\" style=\"padding:6px 12px;font-size:14px;margin:5px;\">Switch</a>";
-                            } else {
-                                map_buttons += "<span style=\"color:#28a745;padding:6px 12px;font-size:14px;margin:5px;\">Current</span>";
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                        } else {
+                            // Serve static files
+                            size_t start_pos = req.find("GET /");
+                            if (start_pos != std::string::npos) {
+                                start_pos += 5;
+                                size_t end_pos = req.find(" HTTP", start_pos);
+                                if (end_pos != std::string::npos) {
+                                    std::string path = req.substr(start_pos, end_pos - start_pos);
+                                    if (path.empty()) {
+                                        path = "index.html";
+                                    }
+                                    
+                                    // Prevent directory traversal attacks
+                                    if (path.find("..") != std::string::npos || path.find("//") != std::string::npos || path[0] == '/') {
+                                        response = "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden";
+                                    } else {
+                                        std::string full_path = "html/" + path;
+                                        std::ifstream file(full_path, std::ios::binary);
+                                        if (file.is_open()) {
+                                            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+                                            std::string content_type = "text/html";
+                                            if (path.find(".css") != std::string::npos) content_type = "text/css";
+                                            else if (path.find(".js") != std::string::npos) content_type = "application/javascript";
+                                            else if (path.find(".png") != std::string::npos) content_type = "image/png";
+                                            
+                                            response = "HTTP/1.1 200 OK\r\nContent-Type: " + content_type + "\r\nConnection: close\r\n\r\n" + content;
+                                        } else {
+                                            response = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nFile not found: " + full_path;
+                                        }
+                                    }
+                                }
                             }
-                            map_buttons += "</td></tr>";
-                            map_idx++;
                         }
-                        map_buttons += "</table>";
 
-                        std::string pause_btn = paused ? "<a href=\"/resume\" class=\"btn\" style=\"background:#28a745;color:white;\">Resume</a>" : 
-                                                         "<a href=\"/pause\" class=\"btn\" style=\"background:#dc3545;color:white;\">Pause</a>";
-
-                        std::string html = std::string("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n") +
-                                           "<html><head><title>ORB-SLAM3 Control</title>" +
-                                           "<style>body{font-family:sans-serif;margin:40px;background:#f5f5f5;text-align:center;}" +
-                                           ".container{background:#fff;padding:30px;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);max-width:600px;margin:auto;}" +
-                                           ".btn{padding:12px 24px;margin:10px;text-decoration:none;border:1px solid #ccc;border-radius:4px;display:inline-block;color:#333;font-weight:bold;transition:0.3s;}" +
-                                           ".btn:hover{background:#e0e0e0;} .active{background:#007bff;color:#fff;border-color:#007bff;} .active:hover{background:#0056b3;}</style>" +
-                                           "</head><body><div class=\"container\">" +
-                                           "<h2>ORB-SLAM3 Remote Control</h2>" +
-                                           "<h3>Current Mode: <span style=\"color:" + (localizationMode ? "#28a745" : "#007bff") + ";\">" + mode_str + "</span></h3>" +
-                                           "<h3>Status: <span style=\"color:" + (paused ? "#dc3545" : "#28a745") + ";\">" + (paused ? "Paused" : "Running") + "</span></h3><hr>" +
-                                           "<div>" +
-                                           "<a href=\"/loc\" class=\"btn " + (localizationMode ? "active" : "") + "\">Localization Mode</a>" +
-                                           "<a href=\"/map\" class=\"btn " + (!localizationMode ? "active" : "") + "\">Mapping Mode</a>" +
-                                           pause_btn +
-                                           "</div><hr><h3>Available Maps</h3><div>" +
-                                           map_buttons +
-                                           "</div>" +
-                                           "<div style=\"margin-top:20px;\">" +
-                                           "<a href=\"/newmap\" class=\"btn\" style=\"background:#ffc107;color:#333;\">Create New Map</a>" +
-                                           "</div>" +
-                                           "<p style=\"margin-top:20px;font-size:12px;color:#777;\">Refresh page to update current status.</p>" +
-                                           "</div></body></html>";
-                        int r = write(new_socket, html.c_str(), html.length());
+                        if (response.empty()) {
+                            response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request";
+                        }
+                        
+                        int r = write(new_socket, response.c_str(), response.length());
                         (void)r; // suppress warning
                     }
                     close(new_socket);
@@ -349,7 +414,27 @@ int main(int argc, char **argv)
         // Pass the image to the SLAM system
         Sophus::SE3f Tcw = SLAM.TrackMonocular(im, tframe);
 
-        cout << "Position " << Tcw.translation().transpose() << " Rotation " << Tcw.angleX() << "," << Tcw.angleY() << "," << Tcw.angleZ() <<  endl;
+        if (SLAM.GetTrackingState() == ORB_SLAM3::Tracking::OK || SLAM.GetTrackingState() == ORB_SLAM3::Tracking::RECENTLY_LOST) {
+            Sophus::SE3f Twc = Tcw.inverse();
+            Eigen::Vector3f t = Twc.translation();
+            Eigen::Quaternionf q = Twc.unit_quaternion();
+            
+            {
+                std::lock_guard<std::mutex> lock(pose_mutex);
+                g_pose_x = t.x();
+                g_pose_y = t.y();
+                g_pose_z = t.z();
+                g_pose_qx = q.x();
+                g_pose_qy = q.y();
+                g_pose_qz = q.z();
+                g_pose_qw = q.w();
+                g_pose_valid = true;
+            }
+            cout << "Position " << Tcw.translation().transpose() << " Rotation " << Tcw.angleX() << "," << Tcw.angleY() << "," << Tcw.angleZ() <<  endl;
+        } else {
+            std::lock_guard<std::mutex> lock(pose_mutex);
+            g_pose_valid = false;
+        }
 
 
 
