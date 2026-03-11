@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ORB-SLAM3 3D Viewer</title>
+    <meta charset="utf-8">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; color: white; font-family: sans-serif; }
+        #overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            pointer-events: none; /* Let clicks pass through to canvas if needed, but we have buttons */
+        }
+        #overlay button {
+            pointer-events: auto;
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #overlay button:hover { background: #0056b3; }
+        #status { color: #ffeb3b; font-weight: bold; }
+    </style>
+    <!-- Use Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="overlay">
+        <h3>ORB-SLAM3 Pose</h3>
+        <div>Status: <span id="status">Connecting...</span></div>
+        <div id="pose-data" style="font-family: monospace; font-size: 12px; margin-top: 10px; white-space: pre;">
+Waiting for data...
+        </div>
+        <button onclick="window.location.href='/'">Back to Control Panel</button>
+        <button onclick="resetCamera()">Reset View</button>
+    </div>
+
+    <script>
+        // ----------------------------------------------------
+        // 1. Setup Three.js Scene
+        // ----------------------------------------------------
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222);
+
+        // Camera
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(2, 2, 5); // Default view position
+
+        // Renderer
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // OrbitControls
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // Grid and Axes
+        const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x444444);
+        scene.add(gridHelper);
+        
+        const axesHelper = new THREE.AxesHelper(2);
+        scene.add(axesHelper);
+
+        // SLAM Camera Object (A small pyramid/frustum to represent the camera)
+        const camGeometry = new THREE.CylinderGeometry(0.2, 0, 0.5, 4, 1);
+        camGeometry.rotateX(Math.PI / 2); // point the tip along Z
+        const camMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+        const slamCameraMesh = new THREE.Mesh(camGeometry, camMaterial);
+        
+        // Add axes helper to the camera itself to see its orientation clearly
+        const camAxesHelper = new THREE.AxesHelper(0.5);
+        slamCameraMesh.add(camAxesHelper);
+        
+        scene.add(slamCameraMesh);
+
+        // Lights
+        const light = new THREE.AmbientLight(0xffffff, 1.0);
+        scene.add(light);
+
+        // ----------------------------------------------------
+        // 2. Handle Window Resize
+        // ----------------------------------------------------
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Reset orbit controls view
+        window.resetCamera = function() {
+            controls.target.set(0, 0, 0);
+            camera.position.set(2, 2, 5);
+        };
+
+        // ----------------------------------------------------
+        // 3. Connect to Server-Sent Events (SSE)
+        // ----------------------------------------------------
+        const statusEl = document.getElementById('status');
+        const poseDataEl = document.getElementById('pose-data');
+
+        const evtSource = new EventSource('/api/stream/pose');
+
+        evtSource.onopen = function() {
+            statusEl.textContent = "Connected";
+            statusEl.style.color = "#28a745";
+        };
+
+        evtSource.onerror = function() {
+            statusEl.textContent = "Disconnected / Reconnecting...";
+            statusEl.style.color = "#dc3545";
+        };
+
+        evtSource.onmessage = function(e) {
+            try {
+                const data = JSON.parse(e.data);
+                if (data.valid) {
+                    
+                    statusEl.textContent = "Tracking";
+                    statusEl.style.color = "#28a745";
+
+                    // ORB-SLAM3 coordinates -> Three.js coordinates
+                    // ORB-SLAM3 (OpenCV): X Right, Y Down, Z Forward
+                    // Three.js: X Right, Y Up, Z Backward
+                    
+                    // Position mapping
+                    const tx = data.x;
+                    const ty = -data.y;
+                    const tz = -data.z;
+
+                    // Quaternion mapping: OpenCV (Y down, Z forward) to Three.js (Y up, Z backward)
+                    // The cleanest way is to create the raw ORB-SLAM quaternion, 
+                    // and apply the coordinate system transformations mathematically.
+                    
+                    slamCameraMesh.position.set(tx, ty, tz);
+                    
+                    const rawQuat = new THREE.Quaternion(data.qx, data.qy, data.qz, data.qw);
+                    
+                    // 1. Invert the Y and Z axes of the world space (mirroring the position flip)
+                    const worldFlipQuat = new THREE.Quaternion(rawQuat.x, -rawQuat.y, -rawQuat.z, rawQuat.w);
+                    
+                    // 2. The physical camera is facing +Z in OpenCV, but -Z in Three.js. 
+                    // We must rotate the local camera model by 180 degrees around the local X axis
+                    // to fix the inverted pitch and forward axis.
+                    const localFixQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+                    
+                    worldFlipQuat.multiply(localFixQuat);
+                    
+                    slamCameraMesh.quaternion.copy(worldFlipQuat);
+
+                    poseDataEl.textContent = `X: ${data.x.toFixed(3)}\nY: ${data.y.toFixed(3)}\nZ: ${data.z.toFixed(3)}\n\nqX: ${data.qx.toFixed(3)}\nqY: ${data.qy.toFixed(3)}\nqZ: ${data.qz.toFixed(3)}\nqW: ${data.qw.toFixed(3)}`;
+
+                    // Optional: Make orbit controls slowly follow the camera if desired
+                    // controls.target.copy(slamCameraMesh.position);
+
+                } else {
+                    statusEl.textContent = "Lost / Invalid Pose";
+                    statusEl.style.color = "#ffc107";
+                    poseDataEl.textContent = "Pose unavailable...";
+                }
+            } catch(err) {
+                console.error("Parse error:", err);
+            }
+        };
+
+        // ----------------------------------------------------
+        // 4. Render Loop
+        // ----------------------------------------------------
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+    </script>
+</body>
+</html>
