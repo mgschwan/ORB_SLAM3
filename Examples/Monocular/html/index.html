@@ -34,6 +34,7 @@
         </div>
         <div style="margin-top:20px;">
             <button class="btn" style="background:#ffc107;color:#333;" onclick="sendCommand('/newmap')">Create New Map</button>
+            <button id="btn-restore-calib" class="btn" style="background:#6f42c1;color:#fff;display:none;" onclick="restoreCalibration()">Restore Saved Calibration</button>
         </div>
         <hr>
         <div>
@@ -129,7 +130,27 @@
             }
         }
 
+        function restoreCalibration() {
+            const calib = JSON.parse(localStorage.getItem('slam_calib'));
+            if (!calib) return;
+
+            const params = new URLSearchParams({
+                fx: calib.fx, fy: calib.fy, cx: calib.cx, cy: calib.cy,
+                k1: calib.k1, k2: calib.k2, p1: calib.p1, p2: calib.p2, k3: calib.k3
+            });
+
+            fetch('/api/calibrate/apply?' + params.toString())
+                .then(() => alert("Saved calibration restored and applied to SLAM."));
+        }
+
+        function checkSavedCalibration() {
+            if (localStorage.getItem('slam_calib')) {
+                document.getElementById('btn-restore-calib').style.display = 'inline-block';
+            }
+        }
+
         // Fetch immediately and poll every second
+        checkSavedCalibration();
         fetchStatus();
         setInterval(fetchStatus, 1000);
     </script>

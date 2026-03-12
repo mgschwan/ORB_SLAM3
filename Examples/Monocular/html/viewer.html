@@ -13,10 +13,10 @@
             background: rgba(0,0,0,0.7);
             padding: 15px;
             border-radius: 8px;
-            pointer-events: none; /* Let clicks pass through to canvas if needed, but we have buttons */
+            /* Allow internal elements to capture clicks, but transparent areas pass through */
+            pointer-events: auto; 
         }
         #overlay button {
-            pointer-events: auto;
             margin-top: 10px;
             padding: 8px 16px;
             background: #007bff;
@@ -28,6 +28,9 @@
         }
         #overlay button:hover { background: #0056b3; }
         #status { color: #ffeb3b; font-weight: bold; }
+        .control-group { margin-top: 15px; text-align: left; }
+        .control-group label { display: block; font-size: 12px; margin-bottom: 5px; }
+        input[type="range"] { width: 100%; }
     </style>
     <!-- Use Three.js from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -40,11 +43,42 @@
         <div id="pose-data" style="font-family: monospace; font-size: 12px; margin-top: 10px; white-space: pre;">
 Waiting for data...
         </div>
-        <button onclick="window.location.href='/'">Back to Control Panel</button>
+        
+        <div class="control-group">
+            <label>Movement Scale: <span id="scale-val">10</span>x</label>
+            <input type="range" id="movement-scale" min="1" max="100" value="10" oninput="updateScale(this.value)">
+        </div>
+
+        <button id="btn-camera-mode" onclick="toggleCameraMode()">Switch to First-Person</button>
         <button onclick="resetCamera()">Reset View</button>
+        <button onclick="window.location.href='/'">Back to Control Panel</button>
     </div>
 
     <script>
+        // ----------------------------------------------------
+        // 0. Configuration and UI state
+        // ----------------------------------------------------
+        let movementScale = 10.0;
+        let isFirstPerson = false;
+
+        window.updateScale = function(val) {
+            movementScale = parseFloat(val);
+            document.getElementById('scale-val').textContent = val;
+        };
+
+        window.toggleCameraMode = function() {
+            isFirstPerson = !isFirstPerson;
+            const btn = document.getElementById('btn-camera-mode');
+            if (isFirstPerson) {
+                btn.textContent = "Switch to Third-Person";
+                controls.enabled = false;
+            } else {
+                btn.textContent = "Switch to First-Person";
+                controls.enabled = true;
+                resetCamera();
+            }
+        };
+
         // ----------------------------------------------------
         // 1. Setup Three.js Scene
         // ----------------------------------------------------
@@ -133,10 +167,10 @@ Waiting for data...
                     // ORB-SLAM3 (OpenCV): X Right, Y Down, Z Forward
                     // Three.js: X Right, Y Up, Z Backward
                     
-                    // Position mapping
-                    const tx = data.x;
-                    const ty = -data.y;
-                    const tz = -data.z;
+                    // Position mapping with scale
+                    const tx = data.x * movementScale;
+                    const ty = -data.y * movementScale;
+                    const tz = -data.z * movementScale;
 
                     // Quaternion mapping: OpenCV (Y down, Z forward) to Three.js (Y up, Z backward)
                     // The cleanest way is to create the raw ORB-SLAM quaternion, 
@@ -178,7 +212,22 @@ Waiting for data...
         // ----------------------------------------------------
         function animate() {
             requestAnimationFrame(animate);
-            controls.update();
+            
+            if (isFirstPerson) {
+                camera.position.copy(slamCameraMesh.position);
+                camera.quaternion.copy(slamCameraMesh.quaternion);
+                
+                // Three.js cameras look down -Z. 
+                // ORB-SLAM3/OpenCV cameras look down +Z.
+                // Our slamCameraMesh is already oriented to match the SLAM coordinates 
+                // (including the 180-deg flip in ty/tz).
+                // However, the PerspectiveCamera itself needs an additional 180 flip
+                // around X to look out the correct "front" face of our mesh.
+                camera.rotateX(Math.PI); 
+            } else {
+                controls.update();
+            }
+
             renderer.render(scene, camera);
         }
         animate();

@@ -288,9 +288,46 @@ int main(int argc, char **argv)
                                 success = true;
                             }
                             
-                            std::string json = "{\"success\": " + std::string(success ? "true" : "false") + "}";
+                            std::string json = "{\"success\": " + std::string(success ? "true" : "false");
+                            if (success) {
+                                json += ", \"fx\": " + std::to_string(cameraMatrix.at<double>(0,0));
+                                json += ", \"fy\": " + std::to_string(cameraMatrix.at<double>(1,1));
+                                json += ", \"cx\": " + std::to_string(cameraMatrix.at<double>(0,2));
+                                json += ", \"cy\": " + std::to_string(cameraMatrix.at<double>(1,2));
+                                json += ", \"k1\": " + std::to_string(distCoeffs.at<double>(0));
+                                json += ", \"k2\": " + std::to_string(distCoeffs.at<double>(1));
+                                json += ", \"p1\": " + std::to_string(distCoeffs.at<double>(2));
+                                json += ", \"p2\": " + std::to_string(distCoeffs.at<double>(3));
+                                json += ", \"k3\": " + std::to_string(distCoeffs.at<double>(4));
+                            }
+                            json += "}";
                             response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
-                        } 
+                        } else if (req.find("GET /api/calibrate/apply") != std::string::npos) {
+                            // Extract params from query string manually
+                            auto get_param = [&](std::string key) {
+                                size_t pos = req.find(key + "=");
+                                if (pos == std::string::npos) return 0.0;
+                                size_t end_pos = req.find_first_of(" &", pos);
+                                return std::stod(req.substr(pos + key.length() + 1, end_pos - (pos + key.length() + 1)));
+                            };
+
+                            cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+                            cameraMatrix.at<double>(0,0) = get_param("fx");
+                            cameraMatrix.at<double>(1,1) = get_param("fy");
+                            cameraMatrix.at<double>(0,2) = get_param("cx");
+                            cameraMatrix.at<double>(1,2) = get_param("cy");
+
+                            cv::Mat distCoeffs = cv::Mat::zeros(5, 1, CV_64F);
+                            distCoeffs.at<double>(0) = get_param("k1");
+                            distCoeffs.at<double>(1) = get_param("k2");
+                            distCoeffs.at<double>(2) = get_param("p1");
+                            distCoeffs.at<double>(3) = get_param("p2");
+                            distCoeffs.at<double>(4) = get_param("k3");
+
+                            SLAM.ChangeCalibration(cameraMatrix, distCoeffs);
+                            cout << ">>> [Web] Applied manual calibration from URL parameters <<<" << endl;
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                        }
                         else if (req.find("GET /api/stream/pose") != std::string::npos) {
                             // Launch detached thread for Server-Sent Events (SSE)
                             std::thread sse_thread([new_socket]() {

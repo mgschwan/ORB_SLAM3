@@ -168,7 +168,9 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    alert("Calibration successful! Tracking has been updated.");
+                    // Save to local storage
+                    localStorage.setItem('slam_calib', JSON.stringify(data));
+                    alert("Calibration successful! Saved to browser and applied to tracking.");
                     window.location.href = '/';
                 } else {
                     alert("Calibration failed. Please capture more varied angles.");
