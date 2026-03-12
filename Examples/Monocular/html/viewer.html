@@ -13,7 +13,6 @@
             background: rgba(0,0,0,0.7);
             padding: 15px;
             border-radius: 8px;
-            /* Allow internal elements to capture clicks, but transparent areas pass through */
             pointer-events: auto; 
         }
         #overlay button {
@@ -25,6 +24,8 @@
             border-radius: 4px;
             cursor: pointer;
             font-weight: bold;
+            display: block;
+            width: 100%;
         }
         #overlay button:hover { background: #0056b3; }
         #status { color: #ffeb3b; font-weight: bold; }
@@ -32,7 +33,6 @@
         .control-group label { display: block; font-size: 12px; margin-bottom: 5px; }
         input[type="range"] { width: 100%; }
     </style>
-    <!-- Use Three.js from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
@@ -50,6 +50,7 @@ Waiting for data...
         </div>
 
         <button id="btn-camera-mode" onclick="toggleCameraMode()">Switch to First-Person</button>
+        <button id="btn-load-map" onclick="loadMap()">Visualize Map</button>
         <button onclick="resetCamera()">Reset View</button>
         <button onclick="window.location.href='/'">Back to Control Panel</button>
     </div>
@@ -78,6 +79,35 @@ Waiting for data...
                 resetCamera();
             }
         };
+
+        function loadMap() {
+            fetch('/api/map/points')
+                .then(response => response.json())
+                .then(data => {
+                    // Remove existing points if any
+                    const existingPoints = scene.getObjectByName("mapPoints");
+                    if (existingPoints) scene.remove(existingPoints);
+
+                    const pointsGroup = new THREE.Group();
+                    pointsGroup.name = "mapPoints";
+
+                    const geometry = new THREE.BufferGeometry();
+                    const vertices = [];
+                    
+                    data.forEach(p => {
+                        // Apply same scale logic as camera
+                        vertices.push(p.x * movementScale, -p.y * movementScale, -p.z * movementScale);
+                    });
+
+                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                    const material = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05 });
+                    const points = new THREE.Points(geometry, material);
+                    
+                    pointsGroup.add(points);
+                    scene.add(pointsGroup);
+                })
+                .catch(err => console.error("Error loading map:", err));
+        }
 
         // ----------------------------------------------------
         // 1. Setup Three.js Scene

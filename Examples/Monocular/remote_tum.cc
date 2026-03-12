@@ -374,6 +374,25 @@ int main(int argc, char **argv)
                             sse_thread.detach();
                             continue; // Do not close socket here, the detached thread handles it
                         }
+                        else if (req.find("GET /api/map/points") != std::string::npos) {
+                            ORB_SLAM3::Map* pMap = SLAM.GetAtlas()->GetCurrentMap();
+                            std::string json = "[";
+                            if(pMap) {
+                                std::vector<ORB_SLAM3::MapPoint*> vpMPs = pMap->GetAllMapPoints();
+                                bool first = true;
+                                for (ORB_SLAM3::MapPoint* pMP : vpMPs) {
+                                    if (!pMP || pMP->isBad()) continue;
+                                    if (!first) json += ",";
+                                    Eigen::Vector3f pos = pMP->GetWorldPos();
+                                    json += "{\"x\":" + std::to_string(pos.x()) + 
+                                            ",\"y\":" + std::to_string(pos.y()) + 
+                                            ",\"z\":" + std::to_string(pos.z()) + "}";
+                                    first = false;
+                                }
+                            }
+                            json += "]";
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
+                        }
                         else if (req.find("GET /api/status") != std::string::npos) {
                             long unsigned int current_map_id = 0;
                             if(SLAM.GetAtlas()->GetCurrentMap()) {
