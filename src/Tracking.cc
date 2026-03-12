@@ -2048,52 +2048,46 @@ void Tracking::Track()
                     {
                         bOK = TrackReferenceKeyFrame();
                     }
+
+                    // MODIFIED: If tracking is weak, immediately switch to VO mode
+                    // but also consider if we've drifted too much.
+                    if (!bOK) {
+                        mbVO = true;
+                    }
                 }
                 else
                 {
                     // In last frame we tracked mainly "visual odometry" points.
 
-                    // We compute two camera poses, one from motion model and one doing relocalization.
-                    // If relocalization is sucessfull we choose that solution, otherwise we retain
-                    // the "visual odometry" solution.
-
-                    bool bOKMM = false;
-                    bool bOKReloc = false;
-                    vector<MapPoint*> vpMPsMM;
-                    vector<bool> vbOutMM;
-                    Sophus::SE3f TcwMM;
-                    if(mbVelocity)
-                    {
-                        bOKMM = TrackWithMotionModel();
-                        vpMPsMM = mCurrentFrame.mvpMapPoints;
-                        vbOutMM = mCurrentFrame.mvbOutlier;
-                        TcwMM = mCurrentFrame.GetPose();
-                    }
-                    bOKReloc = Relocalization();
-
-                    if(bOKMM && !bOKReloc)
-                    {
-                        mCurrentFrame.SetPose(TcwMM);
-                        mCurrentFrame.mvpMapPoints = vpMPsMM;
-                        mCurrentFrame.mvbOutlier = vbOutMM;
-
-                        if(mbVO)
-                        {
-                            for(int i =0; i<mCurrentFrame.N; i++)
-                            {
-                                if(mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
-                                {
-                                    mCurrentFrame.mvpMapPoints[i]->IncreaseFound();
-                                }
-                            }
-                        }
-                    }
-                    else if(bOKReloc)
+                    // MODIFIED: If we are in VO mode but the tracking is lost, 
+                    // or we've been in VO mode for too long without relocalizing,
+                    // we should force a hard reset to LOST to prevent "spiraling out of control".
+                    
+                    bool bOKReloc = Relocalization();
+                    if(bOKReloc)
                     {
                         mbVO = false;
+                        bOK = true;
                     }
-
-                    bOK = bOKReloc || bOKMM;
+                    else
+                    {
+                        // In localization mode, we try to maintain a VO track to stay "active".
+                        // However, if the VO track fails, we fall back to pure relocalization.
+                        bool bOKMM = false;
+                        if(mbVelocity)
+                        {
+                            bOKMM = TrackWithMotionModel();
+                        }
+                        
+                        if (!bOKMM) {
+                            // If even the motion model / VO fails, we are truly LOST.
+                            mState = LOST;
+                            bOK = false;
+                        } else {
+                            // VO is still working, but we are drifting.
+                            bOK = true;
+                        }
+                    }
                 }
             }
         }
