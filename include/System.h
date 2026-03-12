@@ -140,6 +140,8 @@ public:
     void Shutdown();
     bool isShutDown();
 
+    void ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef);
+
     // Save camera trajectory in the TUM RGB-D dataset format.
     // Only for stereo and RGB-D. This method does not work for monocular.
     // Call first Shutdown()

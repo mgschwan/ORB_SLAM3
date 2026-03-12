@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ORB-SLAM3 Camera Calibration</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: sans-serif; margin: 40px; background: #f5f5f5; text-align: center; }
+        .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 95vw; margin: auto; }
+        .btn { padding: 10px 20px; margin: 5px; text-decoration: none; border: 1px solid #ccc; border-radius: 4px; display: inline-block; color: #333; font-weight: bold; transition: 0.3s; cursor: pointer; background: #fff; }
+        .btn:hover { background: #e0e0e0; }
+        .btn-primary { background: #007bff; color: white; border-color: #007bff; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-success { background: #28a745; color: white; border-color: #28a745; }
+        .btn-success:hover { background: #218838; }
+        .btn-warning { background: #ffc107; color: #333; border-color: #ffc107; }
+        .btn-warning:hover { background: #e0a800; }
+        .btn-danger { background: #dc3545; color: white; border-color: #dc3545; }
+        .btn-danger:hover { background: #c82333; }
+        
+        .preview-container { margin: 20px auto; border: 2px solid #ddd; min-height: 300px; max-width: 640px; display: flex; align-items: center; justify-content: center; background: #eee; }
+        .preview-container img { max-width: 100%; max-height: 480px; }
+        
+        .checkerboard-grid {
+            display: grid;
+            grid-template-columns: repeat(10, 6vw);
+            grid-template-rows: repeat(7, 6vw);
+            width: fit-content;
+            margin: 0 auto 20px auto;
+            border: 10px solid #fff;
+            background-color: #fff;
+        }
+        .square { width: 6vw; height: 6vw; }
+        .black { background-color: #000; }
+        .white { background-color: #fff; }
+
+        .input-group { margin: 15px 0; }
+        .input-group label { font-weight: bold; margin-right: 10px; }
+        .input-group input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: 100px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Camera Calibration</h2>
+        
+        <details style="background:#fff3cd; color:#856404; padding:10px; border-radius:4px; margin-bottom:10px; text-align:left;">
+            <summary style="cursor:pointer; font-weight:bold;">View Instructions</summary>
+            <ol style="margin-top:10px;">
+                <li>Enter the physical size of your checkerboard squares in meters.</li>
+                <li>Point your camera at a printed checkerboard (9x6 internal corners). Or point it at the pattern below if your monitor is flat.</li>
+                <li>Click <b>"Capture Frame"</b>. Ensure the corners are detected properly in the preview image.</li>
+                <li>Repeat from different angles and distances until you have at least 15-20 good captures.</li>
+                <li>Click <b>"Compute & Apply Calibration"</b>.</li>
+            </ol>
+        </details>
+
+        <div id="pattern" class="checkerboard-grid"></div>
+
+        <div class="input-group">
+            <label for="squareSize">Square Size (meters):</label>
+            <input type="number" id="squareSize" value="0.025" step="0.001" min="0.001">
+        </div>
+
+        <div style="margin-top: 20px;">
+            <button class="btn btn-primary" onclick="captureFrame()">Capture Frame</button>
+            <button class="btn btn-success" onclick="computeCalibration()">Compute & Apply Calibration</button>
+        </div>
+
+        <hr>
+
+        <h3>Status: <span id="status-text" style="color: #6c757d;">Waiting...</span></h3>
+        <h4>Captured Frames: <span id="count-text" style="color: #007bff; font-size: 1.2em;">0</span></h4>
+
+        <div class="preview-container">
+            <img id="preview-image" src="" alt="Last Captured Frame" style="display: none;">
+            <span id="preview-placeholder">No frames captured yet</span>
+        </div>
+
+        <div style="margin-top:30px;">
+            <button class="btn btn-danger" onclick="exitCalibration()">Exit Calibration Mode</button>
+        </div>
+    </div>
+
+    <script>
+        // Generate the 10x7 checkerboard grid (9x6 internal corners)
+        const pattern = document.getElementById('pattern');
+        for (let r = 0; r < 7; r++) {
+            for (let c = 0; c < 10; c++) {
+                const sq = document.createElement('div');
+                sq.className = 'square ' + ((r + c) % 2 === 0 ? 'white' : 'black');
+                pattern.appendChild(sq);
+            }
+        }
+
+        // Enter calibration mode on load
+        fetch('/api/calibrate/mode?enable=true').then(() => {
+            document.getElementById('status-text').textContent = 'Calibration Mode Active';
+            document.getElementById('status-text').style.color = '#28a745';
+            pollStatus();
+        });
+
+        async function pollStatus() {
+            try {
+                const response = await fetch('/api/calibrate/status');
+                const data = await response.json();
+                document.getElementById('count-text').textContent = data.count;
+            } catch (e) {
+                console.error(e);
+            }
+            setTimeout(pollStatus, 1000);
+        }
+
+        async function captureFrame() {
+            const size = document.getElementById('squareSize').value;
+            document.getElementById('status-text').textContent = 'Capturing...';
+            
+            try {
+                await fetch('/api/calibrate/capture?size=' + size);
+                
+                // Wait briefly for backend to process image
+                setTimeout(updatePreview, 500);
+            } catch (e) {
+                alert('Failed to capture frame');
+            }
+        }
+
+        async function updatePreview() {
+            // Force browser to ignore cache for the image
+            const timestamp = new Date().getTime();
+            const img = document.getElementById('preview-image');
+            const placeholder = document.getElementById('preview-placeholder');
+            
+            img.src = '/api/calibrate/image?t=' + timestamp;
+            img.onload = () => {
+                img.style.display = 'block';
+                placeholder.style.display = 'none';
+                
+                // Fetch status to see if it was successful
+                fetch('/api/calibrate/status').then(r => r.json()).then(data => {
+                    const statusText = document.getElementById('status-text');
+                    if (data.last_success) {
+                        statusText.textContent = 'Corners Detected Successfully!';
+                        statusText.style.color = '#28a745';
+                    } else {
+                        statusText.textContent = 'Failed to find 9x6 corners. Try again.';
+                        statusText.style.color = '#dc3545';
+                    }
+                });
+            };
+            img.onerror = () => {
+                img.style.display = 'none';
+                placeholder.style.display = 'block';
+                placeholder.textContent = 'Image failed to load';
+            };
+        }
+
+        async function computeCalibration() {
+            const countStr = document.getElementById('count-text').textContent;
+            if (parseInt(countStr) < 3) {
+                alert("Please capture at least 3 valid frames before computing.");
+                return;
+            }
+            
+            document.getElementById('status-text').textContent = 'Computing Calibration... Please wait.';
+            document.getElementById('status-text').style.color = '#ffc107';
+            
+            try {
+                const response = await fetch('/api/calibrate/compute');
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert("Calibration successful! Tracking has been updated.");
+                    window.location.href = '/';
+                } else {
+                    alert("Calibration failed. Please capture more varied angles.");
+                    document.getElementById('status-text').textContent = 'Calibration Failed';
+                    document.getElementById('status-text').style.color = '#dc3545';
+                }
+            } catch (e) {
+                alert('Error computing calibration');
+            }
+        }
+
+        async function exitCalibration() {
+            await fetch('/api/calibrate/mode?enable=false');
+            window.location.href = '/';
+        }
+    </script>
+</body>
+</html>

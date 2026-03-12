@@ -3981,6 +3981,33 @@ void Tracking::ChangeCalibration(const string &strSettingPath)
     Frame::mbInitialComputations = true;
 }
 
+void Tracking::ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef)
+{
+    K.copyTo(mK);
+    
+    mK_.setIdentity();
+    mK_(0,0) = K.at<double>(0,0); // calibrateCamera returns double precision
+    mK_(1,1) = K.at<double>(1,1);
+    mK_(0,2) = K.at<double>(0,2);
+    mK_(1,2) = K.at<double>(1,2);
+
+    cv::Mat DistCoefFloat;
+    DistCoef.convertTo(DistCoefFloat, CV_32F);
+    DistCoefFloat.copyTo(mDistCoef);
+
+    // Update the camera pointer
+    vector<float> vCamCalib{
+        (float)K.at<double>(0,0), 
+        (float)K.at<double>(1,1), 
+        (float)K.at<double>(0,2), 
+        (float)K.at<double>(1,2)
+    };
+    mpCamera = new Pinhole(vCamCalib);
+    mpCamera = mpAtlas->AddCamera(mpCamera);
+
+    Frame::mbInitialComputations = true;
+}
+
 void Tracking::InformOnlyTracking(const bool &flag)
 {
     mbOnlyTracking = flag;

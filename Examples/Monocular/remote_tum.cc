@@ -31,18 +31,33 @@
 
 #include<opencv2/core/core.hpp>
 #include<opencv2/videoio.hpp>
+#include<opencv2/calib3d.hpp>
+#include<opencv2/imgcodecs.hpp>
+#include<opencv2/imgproc.hpp>
 
 #include<System.h>
 
 
 bool running = true;
-bool paused = false;
+bool paused = true; // Start paused by default
 
 // Global pose variables for SSE streaming
 std::mutex pose_mutex;
 float g_pose_x = 0, g_pose_y = 0, g_pose_z = 0;
 float g_pose_qx = 0, g_pose_qy = 0, g_pose_qz = 0, g_pose_qw = 1;
 bool g_pose_valid = false;
+
+// Calibration globals
+std::mutex calibration_mutex;
+bool calibration_mode = false;
+bool capture_requested = false;
+float board_square_size = 0.025f;
+std::vector<std::vector<cv::Point2f>> image_points;
+std::vector<std::vector<cv::Point3f>> object_points;
+cv::Mat latest_calibration_image;
+cv::Size board_size(9, 6);
+int capture_count = 0;
+bool last_capture_success = false;
 
 //signal handler
 void sigint_handler(int sig)
@@ -188,7 +203,95 @@ int main(int argc, char **argv)
                         // Default to serving index.html
                         std::string response;
                         
-                        if (req.find("GET /api/stream/pose") != std::string::npos) {
+                        if (req.find("GET /api/calibrate/mode?enable=true") != std::string::npos) {
+                            std::lock_guard<std::mutex> lock(calibration_mutex);
+                            calibration_mode = true;
+                            paused = true; // Pause SLAM tracking while calibrating
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                        } else if (req.find("GET /api/calibrate/mode?enable=false") != std::string::npos) {
+                            std::lock_guard<std::mutex> lock(calibration_mutex);
+                            calibration_mode = false;
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                        } else if (req.find("GET /api/calibrate/capture") != std::string::npos) {
+                            {
+                                std::lock_guard<std::mutex> lock(calibration_mutex);
+                                capture_requested = true;
+                                
+                                // Extract size parameter if present
+                                size_t size_pos = req.find("size=");
+                                if (size_pos != std::string::npos) {
+                                    size_t end_pos = req.find(" ", size_pos);
+                                    if (end_pos != std::string::npos) {
+                                        std::string size_str = req.substr(size_pos + 5, end_pos - (size_pos + 5));
+                                        board_square_size = std::stof(size_str);
+                                    }
+                                }
+                            }
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nCapture Requested";
+                        } else if (req.find("GET /api/calibrate/status") != std::string::npos) {
+                            std::string json;
+                            {
+                                std::lock_guard<std::mutex> lock(calibration_mutex);
+                                json = "{\"count\": " + std::to_string(capture_count) + 
+                                       ", \"last_success\": " + (last_capture_success ? "true" : "false") + 
+                                       ", \"calibrating\": " + (calibration_mode ? "true" : "false") + "}";
+                            }
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
+                        } else if (req.find("GET /api/calibrate/image") != std::string::npos) {
+                            cv::Mat img;
+                            {
+                                std::lock_guard<std::mutex> lock(calibration_mutex);
+                                if (!latest_calibration_image.empty()) {
+                                    latest_calibration_image.copyTo(img);
+                                }
+                            }
+                            if (!img.empty()) {
+                                std::vector<uchar> buf;
+                                cv::imencode(".jpg", img, buf);
+                                std::string img_data(buf.begin(), buf.end());
+                                response = "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: " + std::to_string(img_data.length()) + "\r\nConnection: close\r\n\r\n" + img_data;
+                            } else {
+                                response = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nNo image yet";
+                            }
+                        } else if (req.find("GET /api/calibrate/compute") != std::string::npos) {
+                            cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+                            cv::Mat distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
+                            std::vector<cv::Mat> rvecs, tvecs;
+                            bool success = false;
+                            
+                            std::vector<std::vector<cv::Point2f>> current_img_points;
+                            std::vector<std::vector<cv::Point3f>> current_obj_points;
+                            cv::Size img_size;
+
+                            {
+                                std::lock_guard<std::mutex> lock(calibration_mutex);
+                                current_img_points = image_points;
+                                current_obj_points = object_points;
+                                if (!latest_calibration_image.empty()) {
+                                    img_size = latest_calibration_image.size();
+                                }
+                            }
+
+                            if (current_img_points.size() >= 3 && img_size.width > 0) {
+                                double rms = cv::calibrateCamera(current_obj_points, current_img_points, img_size, cameraMatrix, distCoeffs, rvecs, tvecs);
+                                cout << "Calibration completed with RMS error: " << rms << endl;
+                                
+                                SLAM.ChangeCalibration(cameraMatrix, distCoeffs);
+                                
+                                {
+                                    std::lock_guard<std::mutex> lock(calibration_mutex);
+                                    image_points.clear();
+                                    object_points.clear();
+                                    capture_count = 0;
+                                    calibration_mode = false;
+                                }
+                                success = true;
+                            }
+                            
+                            std::string json = "{\"success\": " + std::string(success ? "true" : "false") + "}";
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
+                        } 
+                        else if (req.find("GET /api/stream/pose") != std::string::npos) {
                             // Launch detached thread for Server-Sent Events (SSE)
                             std::thread sse_thread([new_socket]() {
                                 std::string headers = "HTTP/1.1 200 OK\r\n"
@@ -363,14 +466,7 @@ int main(int argc, char **argv)
 
     while(running)  //for(int ni=0; ni<nImages; ni++)
     {
-        if(paused) {
-            usleep(100000); // Sleep for 100ms when paused to avoid busy looping
-            continue;
-        }
-
         double tframe = 0.0;
-        //cout << "Read image at: " << vstrImageFilenames[ni] << endl;
-        // Read image from file
         #ifdef COMPILEDWITHC11
             std::chrono::steady_clock::time_point read_time = std::chrono::steady_clock::now();
             tframe = std::chrono::duration_cast<std::chrono::milliseconds>(read_time.time_since_epoch()).count();
@@ -379,22 +475,72 @@ int main(int argc, char **argv)
             tframe = std::chrono::duration_cast<std::chrono::milliseconds>(read_time.time_since_epoch()).count();
         #endif
 
+        // Read image from camera continuously to keep buffer fresh
         cap.read(im);
         
         if ( im.empty() ) {
             cout << "No image received" << endl;
+            usleep(100000);
             continue;
         }
         
-
         if(imageScale != 1.f)
         {
-            cout << "Resizing image to: " << imageScale << endl;
-
             int width = im.cols * imageScale;
             int height = im.rows * imageScale;
             cv::resize(im, im, cv::Size(width, height));
+        }
 
+        bool is_calibrating = false;
+        bool do_capture = false;
+        {
+            std::lock_guard<std::mutex> lock(calibration_mutex);
+            is_calibrating = calibration_mode;
+            do_capture = capture_requested;
+        }
+
+        if (is_calibrating) {
+            if (do_capture) {
+                cv::Mat gray;
+                cv::cvtColor(im, gray, cv::COLOR_BGR2GRAY);
+                std::vector<cv::Point2f> corners;
+                bool found = cv::findChessboardCorners(gray, board_size, corners, 
+                                                       cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
+                
+                cv::Mat display_im = im.clone();
+                cv::drawChessboardCorners(display_im, board_size, corners, found);
+
+                {
+                    std::lock_guard<std::mutex> lock(calibration_mutex);
+                    if (found) {
+                        cv::cornerSubPix(gray, corners, cv::Size(11, 11), cv::Size(-1, -1), 
+                                         cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
+                        image_points.push_back(corners);
+                        
+                        std::vector<cv::Point3f> obj;
+                        for (int i = 0; i < board_size.height; i++) {
+                            for (int j = 0; j < board_size.width; j++) {
+                                obj.push_back(cv::Point3f(j * board_square_size, i * board_square_size, 0));
+                            }
+                        }
+                        object_points.push_back(obj);
+                        capture_count++;
+                        last_capture_success = true;
+                    } else {
+                        last_capture_success = false;
+                    }
+                    
+                    latest_calibration_image = display_im;
+                    capture_requested = false;
+                }
+            }
+            usleep(30000); // Sleep briefly to not spin out of control during calibration
+            continue;
+        }
+
+        if(paused) {
+            usleep(100000); // Sleep for 100ms when paused to avoid busy looping
+            continue;
         }
 
 #ifdef COMPILEDWITHC11
@@ -403,14 +549,6 @@ int main(int argc, char **argv)
         std::chrono::monotonic_clock::time_point t1 = std::chrono::monotonic_clock::now();
 #endif
 
-        //cv::imwrite("/tmp/image.jpg", im);
-
-        // if (localizationMode) 
-        // {
-        //     SLAM.ForceRelocalization();
-        // }
-
-        // cout << "Track image" << endl;
         // Pass the image to the SLAM system
         Sophus::SE3f Tcw = SLAM.TrackMonocular(im, tframe);
 

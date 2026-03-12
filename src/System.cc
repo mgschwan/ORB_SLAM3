@@ -1432,6 +1432,12 @@ bool System::isFinished()
     return (GetTimeFromIMUInit()>0.1);
 }
 
+void System::ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef)
+{
+    unique_lock<mutex> lock(mMutexMode);
+    mpTracker->ChangeCalibration(K, DistCoef);
+}
+
 void System::ChangeDataset()
 {
     if(mpAtlas->GetCurrentMap()->KeyFramesInMap() < 12)
