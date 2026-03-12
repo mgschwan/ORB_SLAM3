@@ -34,7 +34,11 @@
         </div>
         <div style="margin-top:20px;">
             <button class="btn" style="background:#ffc107;color:#333;" onclick="sendCommand('/newmap')">Create New Map</button>
-            <button id="btn-restore-calib" class="btn" style="background:#6f42c1;color:#fff;display:none;" onclick="restoreCalibration()">Restore Saved Calibration</button>
+        </div>
+        <hr>
+        <h3>Saved Calibrations</h3>
+        <div id="calibrations-container">
+            No calibrations saved yet.
         </div>
         <hr>
         <div>
@@ -130,8 +134,9 @@
             }
         }
 
-        function restoreCalibration() {
-            const calib = JSON.parse(localStorage.getItem('slam_calib'));
+        function applyCalibration(id) {
+            const list = JSON.parse(localStorage.getItem('slam_calib_list') || '[]');
+            const calib = list.find(c => c.id === id);
             if (!calib) return;
 
             const params = new URLSearchParams({
@@ -140,17 +145,58 @@
             });
 
             fetch('/api/calibrate/apply?' + params.toString())
-                .then(() => alert("Saved calibration restored and applied to SLAM."));
+                .then(() => alert("Calibration '" + calib.name + "' applied to SLAM."));
         }
 
-        function checkSavedCalibration() {
-            if (localStorage.getItem('slam_calib')) {
-                document.getElementById('btn-restore-calib').style.display = 'inline-block';
+        function deleteCalibration(id) {
+            if (!confirm("Are you sure you want to delete this calibration?")) return;
+            let list = JSON.parse(localStorage.getItem('slam_calib_list') || '[]');
+            list = list.filter(c => c.id !== id);
+            localStorage.setItem('slam_calib_list', JSON.stringify(list));
+            renderCalibrations();
+        }
+
+        function renameCalibration(id) {
+            let list = JSON.parse(localStorage.getItem('slam_calib_list') || '[]');
+            const calib = list.find(c => c.id === id);
+            if (!calib) return;
+
+            const newName = prompt("Enter new name for calibration:", calib.name);
+            if (newName && newName.trim()) {
+                calib.name = newName.trim();
+                localStorage.setItem('slam_calib_list', JSON.stringify(list));
+                renderCalibrations();
             }
         }
 
+        function renderCalibrations() {
+            const list = JSON.parse(localStorage.getItem('slam_calib_list') || '[]');
+            const container = document.getElementById('calibrations-container');
+            
+            if (list.length === 0) {
+                container.innerHTML = "No calibrations saved yet.";
+                return;
+            }
+
+            let html = '<table><tr><th>Name</th><th>Date</th><th>Action</th></tr>';
+            list.forEach(c => {
+                const date = new Date(c.id).toLocaleString();
+                html += `<tr>
+                    <td>${c.name}</td>
+                    <td style="font-size: 0.8em; color: #666;">${date}</td>
+                    <td>
+                        <button class="btn" style="padding:6px 12px; background:#6f42c1; color:white;" onclick="applyCalibration(${c.id})">Apply</button>
+                        <button class="btn" style="padding:6px 12px; background:#17a2b8; color:white;" onclick="renameCalibration(${c.id})">Rename</button>
+                        <button class="btn" style="padding:6px 12px; background:#dc3545; color:white;" onclick="deleteCalibration(${c.id})">Delete</button>
+                    </td>
+                </tr>`;
+            });
+            html += '</table>';
+            container.innerHTML = html;
+        }
+
         // Fetch immediately and poll every second
-        checkSavedCalibration();
+        renderCalibrations();
         fetchStatus();
         setInterval(fetchStatus, 1000);
     </script>
