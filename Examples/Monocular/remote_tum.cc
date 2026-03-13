@@ -196,24 +196,25 @@ int main(int argc, char **argv)
                     if (new_socket < 0) continue;
                     
                     // Simple HTTP request parser
-                    std::string headers;
-                    char buffer[1024];
+                    std::string request_data;
+                    char buffer[4096];
                     int valread;
                     bool headers_complete = false;
+                    size_t header_end_pos = std::string::npos;
                     
                     // Read until headers are finished
-                    while ((valread = read(new_socket, buffer, sizeof(buffer)-1)) > 0) {
-                        buffer[valread] = '\0';
-                        headers += buffer;
-                        if (headers.find("\r\n\r\n") != std::string::npos) {
+                    while ((valread = read(new_socket, buffer, sizeof(buffer))) > 0) {
+                        request_data.append(buffer, valread);
+                        header_end_pos = request_data.find("\r\n\r\n");
+                        if (header_end_pos != std::string::npos) {
                             headers_complete = true;
                             break;
                         }
-                        if (headers.length() > 8192) break; // Header too long
+                        if (request_data.length() > 16384) break; // Header too long
                     }
 
                     if (headers_complete) {
-                        std::string req = headers;
+                        std::string req = request_data;
                         std::string response;
                         
                         if (req.find("GET /api/calibrate/mode?enable=true") != std::string::npos) {
@@ -443,25 +444,39 @@ int main(int argc, char **argv)
                             response = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nFailed to save atlas";
                         }
                         else if (req.find("POST /api/atlas/upload") != std::string::npos) {
-                            cout << ">>> [Web] Receiving atlas upload..." << endl;
+                            // Handle Expect: 100-continue
+                            if (req.find("Expect: 100-continue") != std::string::npos) {
+                                std::string continue_resp = "HTTP/1.1 100 Continue\r\n\r\n";
+                                write(new_socket, continue_resp.c_str(), continue_resp.length());
+                            }
+
                             size_t cl_pos = req.find("Content-Length: ");
                             if (cl_pos != std::string::npos) {
                                 size_t cl_end = req.find("\r\n", cl_pos);
-                                int content_length = std::stoi(req.substr(cl_pos + 16, cl_end - (cl_pos + 16)));
+                                long content_length = std::stol(req.substr(cl_pos + 16, cl_end - (cl_pos + 16)));
+                                cout << ">>> [Web] Receiving atlas upload (" << content_length << " bytes)..." << endl;
                                 
-                                size_t body_start = req.find("\r\n\r\n") + 4;
-                                std::string body = req.substr(body_start);
-                                int remaining = content_length - body.length();
+                                size_t body_start = header_end_pos + 4;
+                                std::string body_initial = request_data.substr(body_start);
+                                long remaining = content_length - body_initial.length();
                                 
                                 std::ofstream outfile("web_import.osa", std::ios::binary);
-                                outfile.write(body.data(), body.length());
+                                if (body_initial.length() > 0) {
+                                    outfile.write(body_initial.data(), body_initial.length());
+                                }
                                 
-                                char fbuf[8192];
+                                char fbuf[65536];
                                 while (remaining > 0) {
-                                    valread = read(new_socket, fbuf, std::min((int)sizeof(fbuf), remaining));
-                                    if (valread <= 0) break;
+                                    valread = read(new_socket, fbuf, std::min((long)sizeof(fbuf), remaining));
+                                    if (valread <= 0) {
+                                        cerr << ">>> [Web] Upload interrupted. Remaining: " << remaining << endl;
+                                        break;
+                                    }
                                     outfile.write(fbuf, valread);
                                     remaining -= valread;
+                                    if (content_length > 1024*1024 && (remaining % (5*1024*1024) < 65536)) {
+                                        cout << ">>> [Web] Progress: " << (100 * (content_length - remaining) / content_length) << "%" << endl;
+                                    }
                                 }
                                 outfile.close();
                                 
