@@ -173,7 +173,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
         loadedAtlas = true;
 
-        mpAtlas->CreateNewMap();
+        // mpAtlas->CreateNewMap(); // Don't create an empty map after loading!
 
         //clock_t timeElapsed = clock() - start;
         //unsigned msElapsed = timeElapsed / (CLOCKS_PER_SEC / 1000);
@@ -1351,9 +1351,9 @@ bool System::ForceRelocalization()
     return mpTracker->ForceRelocalization();    
 }
 
-void System::SwitchToMap(int idx)
+void System::SwitchToMap(long unsigned int mapId)
 {
-    unique_lock<mutex> lock(mMutexMode);
+    std::unique_lock<std::mutex> lock(mMutexMode);
     
     bool was_running = !mpLocalMapper->isStopped();
     if (was_running) {
@@ -1370,7 +1370,7 @@ void System::SwitchToMap(int idx)
         }
     }
     
-    mpAtlas->SwitchToMap(idx);
+    mpAtlas->SwitchToMap(mapId);
     
     Map* pNewMap = mpAtlas->GetCurrentMap();
     if (pNewMap->KeyFramesInMap() == 0) {

@@ -56,25 +56,19 @@ Atlas::~Atlas()
 }
 
 
-void Atlas::SwitchToMap(int idx) {
-    cout << "Switching to map actual with id: " << idx << endl;
+void Atlas::SwitchToMap(long unsigned int mapId) {
+    std::unique_lock<std::recursive_mutex> lock(mMutexAtlas);
+    cout << "Switching to map with ID: " << mapId << endl;
     cout << "Atlas has " << mspMaps.size() << " maps" << endl;
-    //std::unique_lock<std::recursive_mutex> lock(mMutexAtlas);
-    if (idx < 0 || idx >= mspMaps.size()) {
-        cerr << "Map index out of range" << endl;
-        return;
-    }
 
-    int i = 0;
     for (Map* pMap : mspMaps) {
-        if (i == idx) {
+        if (pMap && pMap->GetId() == mapId) {
             ChangeMap(pMap);
-            cerr << "Map changed" << endl;
+            cout << "Map changed to ID: " << mapId << endl;
             return;
         }
-        i++;
     }
-    cerr << "Map not found" << endl;
+    cerr << "Map with ID " << mapId << " not found" << endl;
 }
 
 void Atlas::CreateNewMap()
@@ -390,6 +384,11 @@ void Atlas::PostLoad()
         numMP += pMi->GetAllMapPoints().size();
     }
     mvpBackupMaps.clear();
+
+    if (!mspMaps.empty()) {
+        mpCurrentMap = *mspMaps.begin();
+        mpCurrentMap->SetCurrentMap();
+    }
 }
 
 void Atlas::SetKeyFrameDababase(KeyFrameDatabase* pKFDB)

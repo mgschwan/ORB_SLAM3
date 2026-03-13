@@ -158,7 +158,7 @@
                     if (isCurrent) {
                         mapsHtml += `<span style="color:#28a745;padding:6px 12px;font-size:14px;margin:5px;">Current</span>`;
                     } else {
-                        mapsHtml += `<button class="btn" style="padding:6px 12px;font-size:14px;margin:5px;" onclick="sendCommand('/switchmap?id=${idx}')">Switch</button>`;
+                        mapsHtml += `<button class="btn" style="padding:6px 12px;font-size:14px;margin:5px;" onclick="sendCommand('/switchmap?id=${map.id}')">Switch</button>`;
                     }
                     mapsHtml += `</td></tr>`;
                 });

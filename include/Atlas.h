@@ -139,7 +139,7 @@ public:
 
     long unsigned int GetNumLivedMP();
 
-    void SwitchToMap(int idx);
+    void SwitchToMap(long unsigned int mapId);
 
 
 protected:

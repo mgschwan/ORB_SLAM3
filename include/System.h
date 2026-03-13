@@ -192,7 +192,7 @@ public:
 
     bool ForceRelocalization();
 
-    void SwitchToMap(int idx);
+    void SwitchToMap(long unsigned int mapId);
 
     void SaveAtlas(const string &filename, int type);
     bool LoadAtlas(const string &filename, int type);

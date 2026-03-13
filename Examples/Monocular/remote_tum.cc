@@ -547,22 +547,23 @@ int main(int argc, char **argv)
                             cout << ">>> [Web] Resumed Processing <<<" << endl;
                             response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
                         } else if (req.find("GET /switchmap?id=") != std::string::npos) {
-                            size_t pos = req.find("GET /switchmap?id=");
-                            size_t end_pos = req.find(" HTTP", pos);
-                            if (end_pos != std::string::npos) {
-                                std::string id_str = req.substr(pos + 18, end_pos - (pos + 18));
-                                int new_map_id = std::stoi(id_str);
-                                SLAM.SwitchToMap(new_map_id);
+                            size_t pos_switch = req.find("GET /switchmap?id=");
+                            size_t end_pos_switch = req.find(" HTTP", pos_switch);
+                            if (end_pos_switch != std::string::npos) {
+                                std::string id_str = req.substr(pos_switch + 18, end_pos_switch - (pos_switch + 18));
+                                long unsigned int target_map_id = std::stoul(id_str);
+                                SLAM.SwitchToMap(target_map_id);
                                 if (localizationMode) {
                                     SLAM.ForceRelocalization();
                                 }
-                                cout << ">>> [Web] Switched to Map ID: " << new_map_id << " <<<" << endl;
+                                cout << ">>> [Web] Switched to Map ID: " << target_map_id << " <<<" << endl;
                             }
                             response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
                         } else if (req.find("GET /newmap ") != std::string::npos) {
                             SLAM.GetAtlas()->CreateNewMap();
-                            SLAM.SwitchToMap(SLAM.GetAtlas()->CountMaps() - 1);
-                            cout << ">>> [Web] Created and switched to New Map <<<" << endl;
+                            long unsigned int new_map_id = SLAM.GetAtlas()->GetCurrentMap()->GetId();
+                            SLAM.SwitchToMap(new_map_id);
+                            cout << ">>> [Web] Created and switched to New Map ID: " << new_map_id << " <<<" << endl;
                             response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
                         } else {
                             // Serve static files
