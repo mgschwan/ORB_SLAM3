@@ -59,7 +59,7 @@ Map::~Map()
 
 void Map::AddKeyFrame(KeyFrame *pKF)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     if(mspKeyFrames.empty()){
         cout << "First KF:" << pKF->mnId << "; Map init KF:" << mnInitKFid << endl;
         mnInitKFid = pKF->mnId;
@@ -79,25 +79,25 @@ void Map::AddKeyFrame(KeyFrame *pKF)
 
 void Map::AddMapPoint(MapPoint *pMP)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mspMapPoints.insert(pMP);
 }
 
 void Map::SetImuInitialized()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mbImuInitialized = true;
 }
 
 bool Map::isImuInitialized()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mbImuInitialized;
 }
 
 void Map::EraseMapPoint(MapPoint *pMP)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mspMapPoints.erase(pMP);
 
     // TODO: This only erase the pointer.
@@ -106,7 +106,7 @@ void Map::EraseMapPoint(MapPoint *pMP)
 
 void Map::EraseKeyFrame(KeyFrame *pKF)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mspKeyFrames.erase(pKF);
     if(mspKeyFrames.size()>0)
     {
@@ -128,49 +128,49 @@ void Map::EraseKeyFrame(KeyFrame *pKF)
 
 void Map::SetReferenceMapPoints(const vector<MapPoint *> &vpMPs)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mvpReferenceMapPoints = vpMPs;
 }
 
 void Map::InformNewBigChange()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mnBigChangeIdx++;
 }
 
 int Map::GetLastBigChangeIdx()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mnBigChangeIdx;
 }
 
 vector<KeyFrame*> Map::GetAllKeyFrames()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return vector<KeyFrame*>(mspKeyFrames.begin(),mspKeyFrames.end());
 }
 
 vector<MapPoint*> Map::GetAllMapPoints()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return vector<MapPoint*>(mspMapPoints.begin(),mspMapPoints.end());
 }
 
 long unsigned int Map::MapPointsInMap()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mspMapPoints.size();
 }
 
 long unsigned int Map::KeyFramesInMap()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mspKeyFrames.size();
 }
 
 vector<MapPoint*> Map::GetReferenceMapPoints()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mvpReferenceMapPoints;
 }
 
@@ -180,19 +180,19 @@ long unsigned int Map::GetId()
 }
 long unsigned int Map::GetInitKFid()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mnInitKFid;
 }
 
 void Map::SetInitKFid(long unsigned int initKFif)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mnInitKFid = initKFif;
 }
 
 long unsigned int Map::GetMaxKFid()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mnMaxKFid;
 }
 
@@ -251,7 +251,7 @@ bool Map::IsBad()
 
 void Map::ApplyScaledRotation(const Sophus::SE3f &T, const float s, const bool bScaledVel)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
 
     // Body position (IMU) of first keyframe is fixed to (0,0,0)
     Sophus::SE3f Tyw = T;
@@ -284,37 +284,37 @@ void Map::ApplyScaledRotation(const Sophus::SE3f &T, const float s, const bool b
 
 void Map::SetInertialSensor()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mbIsInertial = true;
 }
 
 bool Map::IsInertial()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mbIsInertial;
 }
 
 void Map::SetIniertialBA1()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mbIMU_BA1 = true;
 }
 
 void Map::SetIniertialBA2()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mbIMU_BA2 = true;
 }
 
 bool Map::GetIniertialBA1()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mbIMU_BA1;
 }
 
 bool Map::GetIniertialBA2()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mbIMU_BA2;
 }
 
@@ -325,7 +325,7 @@ void Map::ChangeId(long unsigned int nId)
 
 unsigned int Map::GetLowerKFID()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     if (mpKFlowerID) {
         return mpKFlowerID->mnId;
     }
@@ -334,33 +334,38 @@ unsigned int Map::GetLowerKFID()
 
 int Map::GetMapChangeIndex()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mnMapChange;
 }
 
 void Map::IncreaseChangeIndex()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mnMapChange++;
 }
 
 int Map::GetLastMapChange()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mnMapChangeNotified;
 }
 
 void Map::SetLastMapChange(int currentChangeId)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mnMapChangeNotified = currentChangeId;
 }
 
 void Map::PreSave(std::set<GeometricCamera*> &spCams)
 {
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
+
+    // Create a vector copy of points to safely iterate even if erasures happen
+    std::vector<MapPoint*> vpMPs(mspMapPoints.begin(), mspMapPoints.end());
+
     int nMPWithoutObs = 0;
     //cout << "Map::PreSave() with " << mspMapPoints.size() << " map points and " << mspKeyFrames.size() << " keyframes" << endl;
-    for(MapPoint* pMPi : mspMapPoints)
+    for(MapPoint* pMPi : vpMPs)
     {
         if(!pMPi || pMPi->isBad())
             continue;
@@ -382,8 +387,6 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
                 pMPi->EraseObservation(it->first);
             }
         }
-        usleep(5000);
-        // cout << "Map::PreSave() map point " << pMPi->mnId << " done" << endl;
     }
 
     cout << "Map::PreSave() after removing observations, " << nMPWithoutObs << " map points without observations" << endl;
@@ -396,9 +399,12 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
     }
     cout << "Map::PreSave() " << mvBackupKeyFrameOriginsId.size() << " KF origins" << endl;
 
+    // Refresh the copy of points as some might have been erased in the cleanup loop above
+    std::vector<MapPoint*> vpMPsReady(mspMapPoints.begin(), mspMapPoints.end());
+
     // Backup of MapPoints
     mvpBackupMapPoints.clear();
-    for(MapPoint* pMPi : mspMapPoints)
+    for(MapPoint* pMPi : vpMPsReady)
     {
         if(!pMPi || pMPi->isBad())
             continue;
@@ -408,9 +414,13 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
     }
 
     cout << "Map::PreSave() " << mvpBackupMapPoints.size() << " map points" << endl;
+
+    // Stable copy of KeyFrames
+    std::vector<KeyFrame*> vpKFsReady(mspKeyFrames.begin(), mspKeyFrames.end());
+
     // Backup of KeyFrames
     mvpBackupKeyFrames.clear();
-    for(KeyFrame* pKFi : mspKeyFrames)
+    for(KeyFrame* pKFi : vpKFsReady)
     {
         if(!pKFi || pKFi->isBad())
             continue;

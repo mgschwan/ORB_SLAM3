@@ -408,7 +408,21 @@ int main(int argc, char **argv)
                         }
                         else if (req.find("GET /api/atlas/download") != std::string::npos) {
                             cout << ">>> [Web] Exporting atlas..." << endl;
+                            bool was_mapping = !localizationMode;
+                            if (was_mapping) {
+                                cout << ">>> [Web] Temporarily switching to localization mode for safe export..." << endl;
+                                SLAM.ActivateLocalizationMode();
+                            }
+                            
+                            // Give some time for threads to stop
+                            usleep(100000); 
+
                             SLAM.SaveAtlas("web_export", ORB_SLAM3::System::BINARY_FILE);
+
+                            if (was_mapping) {
+                                cout << ">>> [Web] Resuming mapping mode..." << endl;
+                                SLAM.DeactivateLocalizationMode();
+                            }
                             std::ifstream file("web_export.osa", std::ios::binary | std::ios::ate);
                             if (file.is_open()) {
                                 std::streamsize size = file.tellg();

@@ -205,7 +205,7 @@ protected:
     bool mbIMU_BA2;
 
     // Mutex
-    std::mutex mMutexMap;
+    std::recursive_mutex mMutexMap;
 
 };
 

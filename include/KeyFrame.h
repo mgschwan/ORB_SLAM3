@@ -499,7 +499,7 @@ protected:
     std::mutex mMutexPose; // for pose, velocity and biases
     std::mutex mMutexConnections;
     std::mutex mMutexFeatures;
-    std::mutex mMutexMap;
+    std::recursive_mutex mMutexMap;
 
 public:
     GeometricCamera* mpCamera, *mpCamera2;

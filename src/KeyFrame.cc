@@ -836,18 +836,22 @@ IMU::Bias KeyFrame::GetImuBias()
 
 Map* KeyFrame::GetMap()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mpMap;
 }
 
 void KeyFrame::UpdateMap(Map* pMap)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mpMap = pMap;
 }
 
 void KeyFrame::PreSave(set<KeyFrame*>& spKF,set<MapPoint*>& spMP, set<GeometricCamera*>& spCam)
 {
+    unique_lock<mutex> lock1(mMutexFeatures);
+    unique_lock<mutex> lock2(mMutexConnections);
+    unique_lock<mutex> lock3(mMutexPose);
+
     // Save the id of each MapPoint in this KF, there can be null pointer in the vector
     mvBackupMapPointsId.clear();
     mvBackupMapPointsId.reserve(N);

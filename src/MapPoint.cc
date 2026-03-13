@@ -559,18 +559,21 @@ void MapPoint::PrintObservations()
 
 Map* MapPoint::GetMap()
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     return mpMap;
 }
 
 void MapPoint::UpdateMap(Map* pMap)
 {
-    unique_lock<mutex> lock(mMutexMap);
+    std::unique_lock<std::recursive_mutex> lock(mMutexMap);
     mpMap = pMap;
 }
 
 void MapPoint::PreSave(set<KeyFrame*>& spKF,set<MapPoint*>& spMP)
 {
+    unique_lock<mutex> lock1(mMutexFeatures);
+    unique_lock<mutex> lock2(mMutexPos);
+
     mBackupReplacedId = -1;
     if(mpReplaced && spMP.find(mpReplaced) != spMP.end())
         mBackupReplacedId = mpReplaced->mnId;
@@ -586,16 +589,16 @@ void MapPoint::PreSave(set<KeyFrame*>& spKF,set<MapPoint*>& spMP)
             mBackupObservationsId1[it->first->mnId] = get<0>(it->second);
             mBackupObservationsId2[it->first->mnId] = get<1>(it->second);
         }
-        else
-        {
-            EraseObservation(pKFi);
-        }
     }
 
     // Save the id of the reference KF
-    if(spKF.find(mpRefKF) != spKF.end())
+    if(mpRefKF && spKF.find(mpRefKF) != spKF.end())
     {
         mBackupRefKFId = mpRefKF->mnId;
+    }
+    else
+    {
+        mBackupRefKFId = -1;
     }
 }
 

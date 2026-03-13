@@ -163,7 +163,7 @@ protected:
     ORBVocabulary* mpORBVocabulary;
 
     // Mutex
-    std::mutex mMutexAtlas;
+    std::recursive_mutex mMutexAtlas;
 
 
 }; // class Atlas
