@@ -41,6 +41,17 @@
             No calibrations saved yet.
         </div>
         <hr>
+        <h3>Atlas Management</h3>
+        <div>
+            <button class="btn" style="background:#28a745;color:#fff;" onclick="downloadAtlas()">Download Current Atlas</button>
+        </div>
+        <div style="margin-top:10px;">
+            <label for="atlas-upload" style="display:block;font-size:12px;margin-bottom:5px;">Upload Atlas (.osa)</label>
+            <input type="file" id="atlas-upload" accept=".osa" style="display:inline-block;margin-bottom:10px;">
+            <button class="btn" style="background:#007bff;color:#fff;" onclick="uploadAtlas()">Upload and Load Atlas</button>
+        </div>
+        <div id="atlas-status" style="font-size:12px;margin-top:5px;"></div>
+        <hr>
         <div>
             <button class="btn" style="background:#17a2b8;color:#fff;" onclick="window.location.href='/viewer.html'">Open 3D Viewer</button>
             <button class="btn" style="background:#6c757d;color:#fff;" onclick="window.location.href='/calibration.html'">Camera Calibration</button>
@@ -50,6 +61,48 @@
 
     <script>
         let isPaused = false;
+
+        async function downloadAtlas() {
+            document.getElementById('atlas-status').textContent = "Exporting atlas... please wait.";
+            window.location.href = '/api/atlas/download';
+            setTimeout(() => {
+                document.getElementById('atlas-status').textContent = "";
+            }, 5000);
+        }
+
+        async function uploadAtlas() {
+            const fileInput = document.getElementById('atlas-upload');
+            if (fileInput.files.length === 0) {
+                alert("Please select an .osa file first.");
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const statusEl = document.getElementById('atlas-status');
+            statusEl.textContent = "Uploading atlas... this may take a while.";
+            statusEl.style.color = "blue";
+
+            try {
+                const response = await fetch('/api/atlas/upload', {
+                    method: 'POST',
+                    body: file
+                });
+
+                if (response.ok) {
+                    statusEl.textContent = "Atlas uploaded and loaded successfully!";
+                    statusEl.style.color = "green";
+                    fetchStatus();
+                } else {
+                    const text = await response.text();
+                    statusEl.textContent = "Upload failed: " + text;
+                    statusEl.style.color = "red";
+                }
+            } catch (err) {
+                console.error("Upload error:", err);
+                statusEl.textContent = "Upload error: " + err.message;
+                statusEl.style.color = "red";
+            }
+        }
 
         async function fetchStatus() {
             try {

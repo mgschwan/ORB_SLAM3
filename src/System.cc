@@ -1478,58 +1478,67 @@ void System::InsertTrackTime(double& time)
 void System::SaveAtlas(int type){
     if(!mStrSaveAtlasToFile.empty())
     {
-        //clock_t start = clock();
+        SaveAtlas(mStrSaveAtlasToFile, type);
+    }
+}
 
-        cout << "Starting to save the atlas" << endl;
-        // Save the current session
-        mpAtlas->PreSave();
-        cout << "Pre save done" << endl;
+void System::SaveAtlas(const string &filename, int type)
+{
+    cout << "Starting to save the atlas to: " << filename << endl;
+    // Save the current session
+    mpAtlas->PreSave();
+    cout << "Pre save done" << endl;
 
+    string pathSaveFileName = "./";
+    pathSaveFileName = pathSaveFileName.append(filename);
+    pathSaveFileName = pathSaveFileName.append(".osa");
 
-        string pathSaveFileName = "./";
-        pathSaveFileName = pathSaveFileName.append(mStrSaveAtlasToFile);
-        pathSaveFileName = pathSaveFileName.append(".osa");
+    string strVocabularyChecksum = CalculateCheckSum(mStrVocabularyFilePath,TEXT_FILE);
 
-        string strVocabularyChecksum = CalculateCheckSum(mStrVocabularyFilePath,TEXT_FILE);
+    cout << "Vocabulary checksum: " << strVocabularyChecksum << endl;
 
-        cout << "Vocabulary checksum: " << strVocabularyChecksum << endl;
+    std::size_t found = mStrVocabularyFilePath.find_last_of("/\\");
+    string strVocabularyName = mStrVocabularyFilePath.substr(found+1);
 
-        std::size_t found = mStrVocabularyFilePath.find_last_of("/\\");
-        string strVocabularyName = mStrVocabularyFilePath.substr(found+1);
+    if(type == TEXT_FILE) // File text
+    {
+        cout << "Starting to write the save text file " << endl;
+        std::remove(pathSaveFileName.c_str());
+        std::ofstream ofs(pathSaveFileName, std::ios::binary);
+        boost::archive::text_oarchive oa(ofs);
 
-        if(type == TEXT_FILE) // File text
-        {
-            cout << "Starting to write the save text file " << endl;
-            std::remove(pathSaveFileName.c_str());
-            std::ofstream ofs(pathSaveFileName, std::ios::binary);
-            boost::archive::text_oarchive oa(ofs);
-
-            oa << strVocabularyName;
-            oa << strVocabularyChecksum;
-            oa << mpAtlas;
-            cout << "End to write the save text file" << endl;
-        }
-        else if(type == BINARY_FILE) // File binary
-        {
-            cout << "Starting to write the save binary file" << endl;
-            std::remove(pathSaveFileName.c_str());
-            std::ofstream ofs(pathSaveFileName, std::ios::binary);
-            boost::archive::binary_oarchive oa(ofs);
-            oa << strVocabularyName;
-            oa << strVocabularyChecksum;
-            oa << mpAtlas;
-            cout << "End to write save binary file" << endl;
-        }
+        oa << strVocabularyName;
+        oa << strVocabularyChecksum;
+        oa << mpAtlas;
+        cout << "End to write the save text file" << endl;
+    }
+    else if(type == BINARY_FILE) // File binary
+    {
+        cout << "Starting to write the save binary file" << endl;
+        std::remove(pathSaveFileName.c_str());
+        std::ofstream ofs(pathSaveFileName, std::ios::binary);
+        boost::archive::binary_oarchive oa(ofs);
+        oa << strVocabularyName;
+        oa << strVocabularyChecksum;
+        oa << mpAtlas;
+        cout << "End to write save binary file" << endl;
     }
 }
 
 bool System::LoadAtlas(int type)
 {
+    if(mStrLoadAtlasFromFile.empty())
+        return false;
+    return LoadAtlas(mStrLoadAtlasFromFile, type);
+}
+
+bool System::LoadAtlas(const string &filename, int type)
+{
     string strFileVoc, strVocChecksum;
     bool isRead = false;
 
     string pathLoadFileName = "./";
-    pathLoadFileName = pathLoadFileName.append(mStrLoadAtlasFromFile);
+    pathLoadFileName = pathLoadFileName.append(filename);
     pathLoadFileName = pathLoadFileName.append(".osa");
 
     if(type == TEXT_FILE) // File text
@@ -1538,7 +1547,7 @@ bool System::LoadAtlas(int type)
         std::ifstream ifs(pathLoadFileName, std::ios::binary);
         if(!ifs.good())
         {
-            cout << "Load file not found" << endl;
+            cout << "Load file not found: " << pathLoadFileName << endl;
             return false;
         }
         boost::archive::text_iarchive ia(ifs);
@@ -1554,7 +1563,7 @@ bool System::LoadAtlas(int type)
         std::ifstream ifs(pathLoadFileName, std::ios::binary);
         if(!ifs.good())
         {
-            cout << "Load file not found" << endl;
+            cout << "Load file not found: " << pathLoadFileName << endl;
             return false;
         }
         boost::archive::binary_iarchive ia(ifs);

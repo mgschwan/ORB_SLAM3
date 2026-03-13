@@ -194,6 +194,9 @@ public:
 
     void SwitchToMap(int idx);
 
+    void SaveAtlas(const string &filename, int type);
+    bool LoadAtlas(const string &filename, int type);
+
 #ifdef REGISTER_TIMES
     void InsertRectTime(double& time);
     void InsertResizeTime(double& time);

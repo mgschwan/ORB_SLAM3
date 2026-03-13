@@ -195,12 +195,25 @@ int main(int argc, char **argv)
                     int new_socket = accept(server_fd, NULL, NULL);
                     if (new_socket < 0) continue;
                     
-                    char buffer[1024] = {0};
-                    int valread = read(new_socket, buffer, 1024);
-                    if (valread > 0) {
-                        std::string req(buffer);
-                        
-                        // Default to serving index.html
+                    // Simple HTTP request parser
+                    std::string headers;
+                    char buffer[1024];
+                    int valread;
+                    bool headers_complete = false;
+                    
+                    // Read until headers are finished
+                    while ((valread = read(new_socket, buffer, sizeof(buffer)-1)) > 0) {
+                        buffer[valread] = '\0';
+                        headers += buffer;
+                        if (headers.find("\r\n\r\n") != std::string::npos) {
+                            headers_complete = true;
+                            break;
+                        }
+                        if (headers.length() > 8192) break; // Header too long
+                    }
+
+                    if (headers_complete) {
+                        std::string req = headers;
                         std::string response;
                         
                         if (req.find("GET /api/calibrate/mode?enable=true") != std::string::npos) {
@@ -392,6 +405,65 @@ int main(int argc, char **argv)
                             }
                             json += "]";
                             response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
+                        }
+                        else if (req.find("GET /api/atlas/download") != std::string::npos) {
+                            cout << ">>> [Web] Exporting atlas..." << endl;
+                            SLAM.SaveAtlas("web_export", ORB_SLAM3::System::BINARY_FILE);
+                            std::ifstream file("web_export.osa", std::ios::binary | std::ios::ate);
+                            if (file.is_open()) {
+                                std::streamsize size = file.tellg();
+                                file.seekg(0, std::ios::beg);
+                                std::string headers = "HTTP/1.1 200 OK\r\n"
+                                                      "Content-Type: application/octet-stream\r\n"
+                                                      "Content-Disposition: attachment; filename=\"atlas.osa\"\r\n"
+                                                      "Content-Length: " + std::to_string(size) + "\r\n"
+                                                      "Connection: close\r\n\r\n";
+                                write(new_socket, headers.c_str(), headers.length());
+                                char fbuf[8192];
+                                while(file.read(fbuf, sizeof(fbuf)) || file.gcount() > 0) {
+                                    write(new_socket, fbuf, file.gcount());
+                                }
+                                close(new_socket);
+                                continue;
+                            }
+                            response = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nFailed to save atlas";
+                        }
+                        else if (req.find("POST /api/atlas/upload") != std::string::npos) {
+                            cout << ">>> [Web] Receiving atlas upload..." << endl;
+                            size_t cl_pos = req.find("Content-Length: ");
+                            if (cl_pos != std::string::npos) {
+                                size_t cl_end = req.find("\r\n", cl_pos);
+                                int content_length = std::stoi(req.substr(cl_pos + 16, cl_end - (cl_pos + 16)));
+                                
+                                size_t body_start = req.find("\r\n\r\n") + 4;
+                                std::string body = req.substr(body_start);
+                                int remaining = content_length - body.length();
+                                
+                                std::ofstream outfile("web_import.osa", std::ios::binary);
+                                outfile.write(body.data(), body.length());
+                                
+                                char fbuf[8192];
+                                while (remaining > 0) {
+                                    valread = read(new_socket, fbuf, std::min((int)sizeof(fbuf), remaining));
+                                    if (valread <= 0) break;
+                                    outfile.write(fbuf, valread);
+                                    remaining -= valread;
+                                }
+                                outfile.close();
+                                
+                                cout << ">>> [Web] Loading uploaded atlas..." << endl;
+                                paused = true;
+                                bool success = SLAM.LoadAtlas("web_import", ORB_SLAM3::System::BINARY_FILE);
+                                if (success) {
+                                    cout << ">>> [Web] Atlas loaded successfully <<<" << endl;
+                                    response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
+                                } else {
+                                    cerr << ">>> [Web] Failed to load uploaded atlas <<<" << endl;
+                                    response = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nLoad failed";
+                                }
+                            } else {
+                                response = "HTTP/1.1 411 Length Required\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nLength Required";
+                            }
                         }
                         else if (req.find("GET /api/status") != std::string::npos) {
                             long unsigned int current_map_id = 0;
