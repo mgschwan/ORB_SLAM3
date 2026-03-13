@@ -109,6 +109,8 @@ public:
 
     float GetImageScale();
 
+    void SetAtlas(Atlas* pAtlas) { mpAtlas = pAtlas; }
+
     bool ForceRelocalization() { mState = LOST; return true; }
 
     void InformMapSwitch() {

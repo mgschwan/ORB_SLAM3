@@ -1576,6 +1576,9 @@ bool System::LoadAtlas(const string &filename, int type)
 
     if(isRead)
     {
+        if(mpKeyFrameDatabase)
+            mpKeyFrameDatabase->clear();
+
         //Check if the vocabulary is the same
         string strInputVocabularyChecksum = CalculateCheckSum(mStrVocabularyFilePath,TEXT_FILE);
 
@@ -1589,6 +1592,26 @@ bool System::LoadAtlas(const string &filename, int type)
         mpAtlas->SetKeyFrameDababase(mpKeyFrameDatabase);
         mpAtlas->SetORBVocabulary(mpVocabulary);
         mpAtlas->PostLoad();
+
+        if (mpTracker) {
+            mpTracker->SetAtlas(mpAtlas);
+        }
+        if (mpLocalMapper) {
+            mpLocalMapper->SetAtlas(mpAtlas);
+        }
+        if (mpLoopCloser) {
+            mpLoopCloser->SetAtlas(mpAtlas);
+        }
+        if (mpFrameDrawer) {
+            mpFrameDrawer->SetAtlas(mpAtlas);
+        }
+        if (mpMapDrawer) {
+            mpMapDrawer->SetAtlas(mpAtlas);
+        }
+
+        if (mpTracker) {
+            SwitchToMap(mpAtlas->GetCurrentMap()->GetId());
+        }
 
         return true;
     }

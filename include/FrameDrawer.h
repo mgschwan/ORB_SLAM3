@@ -46,6 +46,8 @@ public:
     // Update info from the last processed frame.
     void Update(Tracking *pTracker);
 
+    void SetAtlas(Atlas* pAtlas) { mpAtlas = pAtlas; }
+
     // Draw last processed frame.
     cv::Mat DrawFrame(float imageScale=1.f);
     cv::Mat DrawRightFrame(float imageScale=1.f);

@@ -44,6 +44,8 @@ public:
 
     void newParameterLoader(Settings* settings);
 
+    void SetAtlas(Atlas* pAtlas) { mpAtlas = pAtlas; }
+
     Atlas* mpAtlas;
 
     void DrawMapPoints();

@@ -1863,7 +1863,15 @@ void Tracking::Track()
 
     if(mState==NO_IMAGES_YET)
     {
-        mState = NOT_INITIALIZED;
+        if(pCurrentMap->KeyFramesInMap()>0)
+        {
+            mState = RECENTLY_LOST;
+            mTimeStampLost = mCurrentFrame.mTimeStamp;
+        }
+        else
+        {
+            mState = NOT_INITIALIZED;
+        }
     }
 
     mLastProcessedState=mState;
@@ -2020,6 +2028,7 @@ void Tracking::Track()
                     Verbose::PrintMess("State is LOST. Continuously trying to relocalize...", Verbose::VERBOSITY_NORMAL);
                     bOK = Relocalization();
                     if (!bOK) {
+                        mpFrameDrawer->Update(this);
                         return;
                     }
                 }
@@ -3759,6 +3768,8 @@ bool Tracking::Relocalization()
                 if(nGood>=50)
                 {
                     bMatch = true;
+                    mpReferenceKF = vpCandidateKFs[i];
+                    mCurrentFrame.mpReferenceKF = mpReferenceKF;
                     break;
                 }
             }
