@@ -36,6 +36,7 @@
 #include<opencv2/imgproc.hpp>
 
 #include<System.h>
+#include<Eigen/Geometry>
 
 
 bool running = true;
@@ -406,6 +407,118 @@ int main(int argc, char **argv)
                             }
                             json += "]";
                             response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
+                        }
+                        else if (req.find("GET /api/map/auto_align_floor") != std::string::npos) {
+                            ORB_SLAM3::Map* pMap = SLAM.GetAtlas()->GetCurrentMap();
+                            std::string json;
+                            if (pMap) {
+                                std::vector<ORB_SLAM3::MapPoint*> vpMPs = pMap->GetAllMapPoints();
+                                std::vector<Eigen::Vector3f> pts;
+                                for (auto* pMP : vpMPs) {
+                                    if (!pMP || pMP->isBad()) continue;
+                                    pts.push_back(pMP->GetWorldPos());
+                                }
+
+                                if (pts.size() >= 10) {
+                                    // Sort descending by Y (largest Y = physically lowest in ORB-SLAM3)
+                                    std::sort(pts.begin(), pts.end(),
+                                        [](const Eigen::Vector3f& a, const Eigen::Vector3f& b){ return a.y() > b.y(); });
+                                    size_t n_floor = std::max((size_t)10, pts.size() * 2 / 5);
+                                    pts.resize(n_floor);
+
+                                    // Estimate map scale for inlier threshold
+                                    Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+                                    for (auto& p : pts) centroid += p;
+                                    centroid /= (float)n_floor;
+                                    float spread = 0.0f;
+                                    for (auto& p : pts) spread += (p - centroid).norm();
+                                    spread /= (float)n_floor;
+                                    float inlier_thresh = spread * 0.05f;
+                                    inlier_thresh = std::max(inlier_thresh, 0.01f);
+
+                                    // RANSAC plane fitting
+                                    Eigen::Vector3f best_normal(0.0f, -1.0f, 0.0f);
+                                    Eigen::Vector3f best_point = pts[0];
+                                    int best_inliers = 0;
+                                    std::srand(12345);
+                                    for (int iter = 0; iter < 300; iter++) {
+                                        int i0 = std::rand() % n_floor;
+                                        int i1 = std::rand() % n_floor;
+                                        int i2 = std::rand() % n_floor;
+                                        if (i0 == i1 || i1 == i2 || i0 == i2) continue;
+                                        Eigen::Vector3f v1 = pts[i1] - pts[i0];
+                                        Eigen::Vector3f v2 = pts[i2] - pts[i0];
+                                        Eigen::Vector3f normal = v1.cross(v2);
+                                        if (normal.norm() < 1e-6f) continue;
+                                        normal.normalize();
+                                        // Ensure normal points up (negative Y in ORB-SLAM3)
+                                        if (normal.y() > 0.0f) normal = -normal;
+                                        int inliers = 0;
+                                        for (const auto& p : pts) {
+                                            if (std::abs(normal.dot(p - pts[i0])) < inlier_thresh)
+                                                inliers++;
+                                        }
+                                        if (inliers > best_inliers) {
+                                            best_inliers = inliers;
+                                            best_normal = normal;
+                                            best_point = pts[i0];
+                                        }
+                                    }
+
+                                    // Rotation to align best_normal → (0, -1, 0) = up in ORB-SLAM3
+                                    Eigen::Vector3f target(0.0f, -1.0f, 0.0f);
+                                    Eigen::Quaternionf q = Eigen::Quaternionf::FromTwoVectors(best_normal, target);
+                                    float angle = 2.0f * std::acos(std::min(1.0f, std::abs(q.w())));
+                                    const float max_angle = 45.0f * M_PI / 180.0f;
+                                    if (angle < max_angle) {
+                                        Sophus::SE3f T(q.toRotationMatrix(), Eigen::Vector3f::Zero());
+                                        pMap->ApplyScaledRotation(T, 1.0f, false);
+                                        cout << ">>> [Web] Auto floor alignment applied: "
+                                             << best_inliers << "/" << n_floor << " inliers, angle="
+                                             << (angle * 180.0f / M_PI) << " deg <<<" << endl;
+                                        json = "{\"success\":true,\"inliers\":" + std::to_string(best_inliers)
+                                             + ",\"total\":" + std::to_string(n_floor)
+                                             + ",\"angle_deg\":" + std::to_string(angle * 180.0f / M_PI) + "}";
+                                    } else {
+                                        cout << ">>> [Web] Auto floor alignment skipped: angle too large ("
+                                             << (angle * 180.0f / M_PI) << " deg) <<<" << endl;
+                                        json = "{\"success\":false,\"error\":\"rotation too large\",\"angle_deg\":"
+                                             + std::to_string(angle * 180.0f / M_PI) + "}";
+                                    }
+                                } else {
+                                    json = "{\"success\":false,\"error\":\"not enough map points\"}";
+                                }
+                            } else {
+                                json = "{\"success\":false,\"error\":\"no active map\"}";
+                            }
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n" + json;
+                        }
+                        else if (req.find("GET /api/map/align_floor") != std::string::npos) {
+                            auto get_float_param = [&](const std::string& key) -> float {
+                                size_t pos = req.find(key + "=");
+                                if (pos == std::string::npos) return 0.0f;
+                                size_t end = req.find_first_of(" &\r\n", pos + key.size() + 1);
+                                try { return std::stof(req.substr(pos + key.size() + 1, end - (pos + key.size() + 1))); }
+                                catch (...) { return 0.0f; }
+                            };
+                            float pitch = get_float_param("pitch");
+                            float roll  = get_float_param("roll");
+
+                            ORB_SLAM3::Map* pMap = SLAM.GetAtlas()->GetCurrentMap();
+                            std::string json;
+                            if (pMap) {
+                                Eigen::Matrix3f R =
+                                    (Eigen::AngleAxisf(pitch, Eigen::Vector3f::UnitX()) *
+                                     Eigen::AngleAxisf(roll,  Eigen::Vector3f::UnitZ())).toRotationMatrix();
+                                Sophus::SE3f T(R, Eigen::Vector3f::Zero());
+                                pMap->ApplyScaledRotation(T, 1.0f, false);
+                                cout << ">>> [Web] Floor alignment applied: pitch=" << pitch
+                                     << " roll=" << roll << " rad <<<" << endl;
+                                json = "{\"success\":true}";
+                            } else {
+                                json = "{\"success\":false,\"error\":\"no active map\"}";
+                            }
+                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n" + json;
                         }
                         else if (req.find("GET /api/atlas/download") != std::string::npos) {
                             cout << ">>> [Web] Exporting atlas..." << endl;
