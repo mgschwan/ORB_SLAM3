@@ -177,14 +177,14 @@ When activated via `SLAM.ActivateLocalizationMode()`:
     - A "representative" descriptor (chosen from all observations).
 - **`Atlas`**: The multi-map manager. It contains a set of `Map` objects. Only one map is "current" at a time.
 
-### 4. New Executables (Examples/Monocular)
-- **`mono_tum_mgschwan.cc`**: 
+### 4. New Executables
+- **`Examples/Monocular/mono_tum_mgschwan.cc`**:
     - Supports an optional `localize_only` command-line argument.
     - Specifically designed to work with TUM dataset format but with the improved localization logic.
-- **`remote_tum.cc`**:
+- **`localization_service/src/localization_service_host.cc`** (built to `localization_service/localization_service_host`):
     - Uses `cv::VideoCapture` to process streams from a URL (e.g., IP camera, MJPEG stream). Now also handles local V4L2 device formats directly (e.g., `/dev/video0`).
     - Acts as an asynchronous Web Interface for manual control over SLAM operations.
-    - Features endpoints for REST API Status (`/api/status`) serving JSON variables, action endpoints (`/pause`, `/resume`, `/newmap`, `/switchmap?id=X`), and safely serves static frontend assets (HTML, CSS, JS) directly out of `Examples/Monocular/html/`.
+    - Features endpoints for REST API Status (`/api/status`) serving JSON variables, action endpoints (`/pause`, `/resume`, `/newmap`, `/switchmap?id=X`), and safely serves static frontend assets (HTML, CSS, JS) directly out of `localization_service/html/`.
 
 ### 5. Configuration & Settings
 - **Loop Closing Toggle:** Added support for a `loopClosing` flag in the YAML settings file to enable/disable the Loop Closing thread.
@@ -224,8 +224,8 @@ else if (mState == LOST)
 - (Optional) Pangolin
 
 ## Usage
-The new executables can be found in the `build` directory after compilation.
-Example for `remote_tum`:
+The new executables are output to their respective source directories after compilation.
+Example for `localization_service_host`:
 ```bash
-./remote_tum path_to_vocabulary path_to_settings camera_url [localize_only] [map_id]
+./localization_service/localization_service_host path_to_vocabulary path_to_settings camera_url [localize_only] [map_id]
 ```
