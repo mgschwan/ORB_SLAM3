@@ -132,7 +132,12 @@ ${PROJECT_SOURCE_DIR}/Thirdparty/g2o/lib/libg2o.so
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/localization_service)
 
 add_executable(localization_service_host
-        localization_service/src/localization_service_host.cc)
+        localization_service/src/localization_service_host.cc
+        localization_service/src/slam_state.cc
+        localization_service/src/calibration_manager.cc
+        localization_service/src/web_server.cc)
+target_include_directories(localization_service_host PRIVATE
+        localization_service/include)
 target_link_libraries(localization_service_host ${PROJECT_NAME} -lGL)
 
 

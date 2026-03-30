@@ -1,874 +1,241 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
-* Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez,
+*   José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós,
+*   University of Zaragoza.
 *
-* ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
-* License as published by the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* ORB-SLAM3 is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
-* the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License along with ORB-SLAM3.
-* If not, see <http://www.gnu.org/licenses/>.
+* ORB-SLAM3 is free software: you can redistribute it and/or modify it under
+* the terms of the GNU General Public License as published by the Free Software
+* Foundation, either version 3 of the License, or (at your option) any later version.
 */
 
-#include<iostream>
-#include<algorithm>
-#include<fstream>
-#include<chrono>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <iostream>
+#include <string>
 #include <thread>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <signal.h>
 #include <unistd.h>
 
+#include <opencv2/core/core.hpp>
+#include <opencv2/videoio.hpp>
 
-#include<opencv2/core/core.hpp>
-#include<opencv2/videoio.hpp>
-#include<opencv2/calib3d.hpp>
-#include<opencv2/imgcodecs.hpp>
-#include<opencv2/imgproc.hpp>
+#include <System.h>
+#include <sophus/se3.hpp>
 
-#include<System.h>
-#include<Eigen/Geometry>
+#include "localization_service/config.h"
+#include "localization_service/slam_state.h"
+#include "localization_service/calibration_manager.h"
+#include "localization_service/web_server.h"
 
+using namespace localization_service;
 
-bool running = true;
-bool paused = true; // Start paused by default
+// Global flag set by SIGINT so the main loop can exit cleanly.
+static LifecycleFlags* g_flags = nullptr;
 
-// Global pose variables for SSE streaming
-std::mutex pose_mutex;
-float g_pose_x = 0, g_pose_y = 0, g_pose_z = 0;
-float g_pose_qx = 0, g_pose_qy = 0, g_pose_qz = 0, g_pose_qw = 1;
-bool g_pose_valid = false;
-
-// Calibration globals
-std::mutex calibration_mutex;
-bool calibration_mode = false;
-bool capture_requested = false;
-float board_square_size = 0.025f;
-std::vector<std::vector<cv::Point2f>> image_points;
-std::vector<std::vector<cv::Point3f>> object_points;
-cv::Mat latest_calibration_image;
-cv::Size board_size(9, 6);
-int capture_count = 0;
-bool last_capture_success = false;
-
-//signal handler
-void sigint_handler(int sig)
+static void sigintHandler(int)
 {
-    running = false;
+    if (g_flags) g_flags->running = false;
 }
 
-
-
-using namespace std;
-
-int main(int argc, char **argv)
+// ---- Stdin command handler -------------------------------------------------
+// Runs on the control thread alongside the HTTP server so that console
+// commands and web requests share the same SLAM state.
+static void handleStdinCommand(const std::string&  command,
+                                ORB_SLAM3::System&  slam,
+                                LifecycleFlags&     flags,
+                                std::atomic<bool>&  localizationMode,
+                                long unsigned int   mapId)
 {
-    if(argc < 4)
-    {
-        cerr << endl << "Usage: ./mono_tum path_to_vocabulary path_to_settings camera_url [localize_only] [map_id]" << endl;
+    if (command == "loc" || command == "localize") {
+        if (!localizationMode) {
+            localizationMode = true;
+            slam.GetAtlas()->SwitchToMap(mapId);
+            slam.ActivateLocalizationMode();
+            slam.ForceRelocalization();
+            std::cout << ">>> Switched to Localization Mode <<<\n";
+        }
+    } else if (command == "map" || command == "mapping") {
+        if (localizationMode) {
+            localizationMode = false;
+            slam.DeactivateLocalizationMode();
+            std::cout << ">>> Switched to Mapping Mode <<<\n";
+        }
+    } else if (command == "pause") {
+        flags.paused = true;
+        std::cout << ">>> Paused Processing <<<\n";
+    } else if (command == "resume") {
+        flags.paused = false;
+        std::cout << ">>> Resumed Processing <<<\n";
+    } else if (command == "quit" || command == "exit") {
+        flags.running = false;
+    }
+}
+
+// ---- Camera open -----------------------------------------------------------
+static cv::VideoCapture openCamera(const std::string& source)
+{
+    cv::VideoCapture cap;
+
+    bool isNumber = !source.empty();
+    for (char c : source)
+        if (!isdigit(c)) { isNumber = false; break; }
+
+    if (isNumber)
+        cap.open(std::stoi(source), cv::CAP_V4L2);
+    else if (source.rfind("/dev/video", 0) == 0)
+        cap.open(source, cv::CAP_V4L2);
+    else
+        cap.open(source);
+
+    return cap;
+}
+
+// ===========================================================================
+// main
+// ===========================================================================
+
+int main(int argc, char** argv)
+{
+    if (argc < 4) {
+        std::cerr << "\nUsage: ./localization_service_host"
+                     " path_to_vocabulary path_to_settings camera_url"
+                     " [localize_only] [map_id]\n\n";
         return 1;
     }
 
-    bool localizationMode = false;
-    if ( argc >= 5 ) {
-        localizationMode = true;
-    }
-    string strFile = string(argv[3]); 
+    const std::string vocabPath    = argv[1];
+    const std::string settingsPath = argv[2];
+    const std::string cameraSource = argv[3];
+    const bool        startInLocMode = (argc >= 5);
+    const long unsigned int mapId  = (argc >= 6) ? std::stoul(argv[5]) : 0;
 
-    int map_id = 0;
-    if ( argc >= 6 ) {
-        map_id = atoi(argv[5]);
-    }
-
-    cv::VideoCapture cap;
-    
-    bool is_number = true;
-    for(char c : strFile) {
-        if(!isdigit(c)) {
-            is_number = false;
-            break;
-        }
-    }
-    
-    if(is_number) {
-        cap.open(stoi(strFile), cv::CAP_V4L2);
-    } else if (strFile.find("/dev/video") == 0) {
-        cap.open(strFile, cv::CAP_V4L2);
-    } else {
-        cap.open(strFile);
+    cv::VideoCapture cap = openCamera(cameraSource);
+    if (!cap.isOpened()) {
+        std::cerr << "Failed to open camera: " << cameraSource << "\n";
+        return 1;
     }
 
-
-
-    //int nImages = vstrImageFilenames.size();
-    //cout << "Number of images: " << nImages << endl;
-    cout << "Initializing ORB-SLAM3" << endl;
-
-    // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::MONOCULAR,true);
+    std::cout << "Initializing ORB-SLAM3\n";
+    ORB_SLAM3::System slam(vocabPath, settingsPath, ORB_SLAM3::System::MONOCULAR, true);
     ORB_SLAM3::Verbose::SetTh(ORB_SLAM3::Verbose::VERBOSITY_DEBUG);
-    float imageScale = SLAM.GetImageScale();
+    const float imageScale = slam.GetImageScale();
+    std::cout << "Image scale: " << imageScale << "\n";
 
-    if (localizationMode) 
-    {
-        cout << "Activating localization mode" << endl;
-        SLAM.GetAtlas()->SwitchToMap(map_id);
-        SLAM.ActivateLocalizationMode();
-        SLAM.ForceRelocalization();
+    // Shared state
+    LifecycleFlags     flags;
+    PoseState          pose;
+    std::atomic<bool>  localizationMode{false};
+
+    if (startInLocMode) {
+        std::cout << "Activating localization mode\n";
+        localizationMode = true;
+        slam.GetAtlas()->SwitchToMap(static_cast<unsigned int>(mapId));
+        slam.ActivateLocalizationMode();
+        slam.ForceRelocalization();
     }
 
+    // Install SIGINT handler
+    g_flags = &flags;
+    signal(SIGINT, sigintHandler);
 
-    cout << "Image scale: " << imageScale << endl;
+    // Components
+    CalibrationManager calib(slam);
+    WebServer          server(slam, flags, pose, calib, localizationMode, mapId);
 
-    std::thread controlThread([&SLAM, &localizationMode, map_id]() {
-        int server_fd;
-        if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-            cerr << "Socket creation failed" << endl;
-            return;
-        }
-        int opt = 1;
-        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
-        struct sockaddr_in address;
-        address.sin_family = AF_INET;
-        address.sin_addr.s_addr = INADDR_ANY;
-        address.sin_port = htons(8080);
-        
-        if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-            cerr << "Socket bind failed" << endl;
-            return;
-        }
-        listen(server_fd, 3);
-        
-        cout << endl << "--------------------------------------------------------" << endl;
-        cout << "Remote control running at http://localhost:8080" << endl;
-        cout << "Console commands: 'loc', 'map', 'quit', 'pause', 'resume'" << endl;
-        cout << "--------------------------------------------------------" << endl << endl;
-
-        while (running) {
-            fd_set readfds;
-            FD_ZERO(&readfds);
-            FD_SET(server_fd, &readfds);
-            FD_SET(STDIN_FILENO, &readfds);
-            
-            int max_sd = server_fd > STDIN_FILENO ? server_fd : STDIN_FILENO;
-            
-            struct timeval tv = {1, 0};
-            int activity = select(max_sd + 1, &readfds, NULL, NULL, &tv);
-            
-            if (activity > 0) {
-                if (FD_ISSET(STDIN_FILENO, &readfds)) {
-                    std::string command;
-                    std::cin >> command;
-                    if(command == "loc" || command == "localize") {
-                        if (!localizationMode) {
-                            localizationMode = true;
-                            SLAM.GetAtlas()->SwitchToMap(map_id);
-                            SLAM.ActivateLocalizationMode();
-                            SLAM.ForceRelocalization();
-                            cout << ">>> Switched to Localization Mode <<<" << endl;
-                        }
-                    } else if(command == "map" || command == "mapping") {
-                        if (localizationMode) {
-                            localizationMode = false;
-                            SLAM.DeactivateLocalizationMode();
-                            cout << ">>> Switched to Mapping Mode <<<" << endl;
-                        }
-                    } else if(command == "pause") {
-                        paused = true;
-                        cout << ">>> Paused Processing <<<" << endl;
-                    } else if(command == "resume") {
-                        paused = false;
-                        cout << ">>> Resumed Processing <<<" << endl;
-                    } else if(command == "quit" || command == "exit") {
-                        running = false;
-                    }
-                }
-                if (FD_ISSET(server_fd, &readfds)) {
-                    int new_socket = accept(server_fd, NULL, NULL);
-                    if (new_socket < 0) continue;
-                    
-                    // Simple HTTP request parser
-                    std::string request_data;
-                    char buffer[4096];
-                    int valread;
-                    bool headers_complete = false;
-                    size_t header_end_pos = std::string::npos;
-                    
-                    // Read until headers are finished
-                    while ((valread = read(new_socket, buffer, sizeof(buffer))) > 0) {
-                        request_data.append(buffer, valread);
-                        header_end_pos = request_data.find("\r\n\r\n");
-                        if (header_end_pos != std::string::npos) {
-                            headers_complete = true;
-                            break;
-                        }
-                        if (request_data.length() > 16384) break; // Header too long
-                    }
-
-                    if (headers_complete) {
-                        std::string req = request_data;
-                        std::string response;
-                        
-                        if (req.find("GET /api/calibrate/mode?enable=true") != std::string::npos) {
-                            std::lock_guard<std::mutex> lock(calibration_mutex);
-                            calibration_mode = true;
-                            paused = true; // Pause SLAM tracking while calibrating
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        } else if (req.find("GET /api/calibrate/mode?enable=false") != std::string::npos) {
-                            std::lock_guard<std::mutex> lock(calibration_mutex);
-                            calibration_mode = false;
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        } else if (req.find("GET /api/calibrate/capture") != std::string::npos) {
-                            {
-                                std::lock_guard<std::mutex> lock(calibration_mutex);
-                                capture_requested = true;
-                                
-                                // Extract size parameter if present
-                                size_t size_pos = req.find("size=");
-                                if (size_pos != std::string::npos) {
-                                    size_t end_pos = req.find(" ", size_pos);
-                                    if (end_pos != std::string::npos) {
-                                        std::string size_str = req.substr(size_pos + 5, end_pos - (size_pos + 5));
-                                        board_square_size = std::stof(size_str);
-                                    }
-                                }
-                            }
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nCapture Requested";
-                        } else if (req.find("GET /api/calibrate/status") != std::string::npos) {
-                            std::string json;
-                            {
-                                std::lock_guard<std::mutex> lock(calibration_mutex);
-                                json = "{\"count\": " + std::to_string(capture_count) + 
-                                       ", \"last_success\": " + (last_capture_success ? "true" : "false") + 
-                                       ", \"calibrating\": " + (calibration_mode ? "true" : "false") + "}";
-                            }
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
-                        } else if (req.find("GET /api/calibrate/image") != std::string::npos) {
-                            cv::Mat img;
-                            {
-                                std::lock_guard<std::mutex> lock(calibration_mutex);
-                                if (!latest_calibration_image.empty()) {
-                                    latest_calibration_image.copyTo(img);
-                                }
-                            }
-                            if (!img.empty()) {
-                                std::vector<uchar> buf;
-                                cv::imencode(".jpg", img, buf);
-                                std::string img_data(buf.begin(), buf.end());
-                                response = "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: " + std::to_string(img_data.length()) + "\r\nConnection: close\r\n\r\n" + img_data;
-                            } else {
-                                response = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nNo image yet";
-                            }
-                        } else if (req.find("GET /api/calibrate/compute") != std::string::npos) {
-                            cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
-                            cv::Mat distCoeffs = cv::Mat::zeros(8, 1, CV_64F);
-                            std::vector<cv::Mat> rvecs, tvecs;
-                            bool success = false;
-                            
-                            std::vector<std::vector<cv::Point2f>> current_img_points;
-                            std::vector<std::vector<cv::Point3f>> current_obj_points;
-                            cv::Size img_size;
-
-                            {
-                                std::lock_guard<std::mutex> lock(calibration_mutex);
-                                current_img_points = image_points;
-                                current_obj_points = object_points;
-                                if (!latest_calibration_image.empty()) {
-                                    img_size = latest_calibration_image.size();
-                                }
-                            }
-
-                            if (current_img_points.size() >= 3 && img_size.width > 0) {
-                                double rms = cv::calibrateCamera(current_obj_points, current_img_points, img_size, cameraMatrix, distCoeffs, rvecs, tvecs);
-                                cout << "Calibration completed with RMS error: " << rms << endl;
-                                
-                                SLAM.ChangeCalibration(cameraMatrix, distCoeffs);
-                                
-                                {
-                                    std::lock_guard<std::mutex> lock(calibration_mutex);
-                                    image_points.clear();
-                                    object_points.clear();
-                                    capture_count = 0;
-                                    calibration_mode = false;
-                                }
-                                success = true;
-                            }
-                            
-                            std::string json = "{\"success\": " + std::string(success ? "true" : "false");
-                            if (success) {
-                                json += ", \"fx\": " + std::to_string(cameraMatrix.at<double>(0,0));
-                                json += ", \"fy\": " + std::to_string(cameraMatrix.at<double>(1,1));
-                                json += ", \"cx\": " + std::to_string(cameraMatrix.at<double>(0,2));
-                                json += ", \"cy\": " + std::to_string(cameraMatrix.at<double>(1,2));
-                                json += ", \"k1\": " + std::to_string(distCoeffs.at<double>(0));
-                                json += ", \"k2\": " + std::to_string(distCoeffs.at<double>(1));
-                                json += ", \"p1\": " + std::to_string(distCoeffs.at<double>(2));
-                                json += ", \"p2\": " + std::to_string(distCoeffs.at<double>(3));
-                                json += ", \"k3\": " + std::to_string(distCoeffs.at<double>(4));
-                            }
-                            json += "}";
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
-                        } else if (req.find("GET /api/calibrate/apply") != std::string::npos) {
-                            // Extract params from query string manually
-                            auto get_param = [&](std::string key) {
-                                size_t pos = req.find(key + "=");
-                                if (pos == std::string::npos) return 0.0;
-                                size_t end_pos = req.find_first_of(" &", pos);
-                                return std::stod(req.substr(pos + key.length() + 1, end_pos - (pos + key.length() + 1)));
-                            };
-
-                            cv::Mat cameraMatrix = cv::Mat::eye(3, 3, CV_64F);
-                            cameraMatrix.at<double>(0,0) = get_param("fx");
-                            cameraMatrix.at<double>(1,1) = get_param("fy");
-                            cameraMatrix.at<double>(0,2) = get_param("cx");
-                            cameraMatrix.at<double>(1,2) = get_param("cy");
-
-                            cv::Mat distCoeffs = cv::Mat::zeros(5, 1, CV_64F);
-                            distCoeffs.at<double>(0) = get_param("k1");
-                            distCoeffs.at<double>(1) = get_param("k2");
-                            distCoeffs.at<double>(2) = get_param("p1");
-                            distCoeffs.at<double>(3) = get_param("p2");
-                            distCoeffs.at<double>(4) = get_param("k3");
-
-                            SLAM.ChangeCalibration(cameraMatrix, distCoeffs);
-                            cout << ">>> [Web] Applied manual calibration from URL parameters <<<" << endl;
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        }
-                        else if (req.find("GET /api/stream/pose") != std::string::npos) {
-                            // Launch detached thread for Server-Sent Events (SSE)
-                            std::thread sse_thread([new_socket]() {
-                                std::string headers = "HTTP/1.1 200 OK\r\n"
-                                                      "Content-Type: text/event-stream\r\n"
-                                                      "Cache-Control: no-cache\r\n"
-                                                      "Connection: keep-alive\r\n"
-                                                      "Access-Control-Allow-Origin: *\r\n\r\n";
-                                
-                                // Ignore SIGPIPE on Linux so write doesn't crash the program if client disconnects
-                                signal(SIGPIPE, SIG_IGN);
-
-                                if (write(new_socket, headers.c_str(), headers.length()) < 0) {
-                                    close(new_socket);
-                                    return;
-                                }
-
-                                while (running) {
-                                    std::string json;
-                                    {
-                                        std::lock_guard<std::mutex> lock(pose_mutex);
-                                        if (g_pose_valid) {
-                                            json = "data: {\"valid\":true,\"x\":" + std::to_string(g_pose_x) + 
-                                                   ",\"y\":" + std::to_string(g_pose_y) + 
-                                                   ",\"z\":" + std::to_string(g_pose_z) + 
-                                                   ",\"qx\":" + std::to_string(g_pose_qx) + 
-                                                   ",\"qy\":" + std::to_string(g_pose_qy) + 
-                                                   ",\"qz\":" + std::to_string(g_pose_qz) + 
-                                                   ",\"qw\":" + std::to_string(g_pose_qw) + "}\n\n";
-                                        } else {
-                                            json = "data: {\"valid\":false}\n\n";
-                                        }
-                                    }
-                                    
-                                    if (write(new_socket, json.c_str(), json.length()) < 0) {
-                                        // Client disconnected or socket error
-                                        break;
-                                    }
-                                    
-                                    usleep(33000); // ~30 fps
-                                }
-                                close(new_socket);
-                            });
-                            sse_thread.detach();
-                            continue; // Do not close socket here, the detached thread handles it
-                        }
-                        else if (req.find("GET /api/map/points") != std::string::npos) {
-                            ORB_SLAM3::Map* pMap = SLAM.GetAtlas()->GetCurrentMap();
-                            std::string json = "[";
-                            if(pMap) {
-                                std::vector<ORB_SLAM3::MapPoint*> vpMPs = pMap->GetAllMapPoints();
-                                bool first = true;
-                                for (ORB_SLAM3::MapPoint* pMP : vpMPs) {
-                                    if (!pMP || pMP->isBad()) continue;
-                                    if (!first) json += ",";
-                                    Eigen::Vector3f pos = pMP->GetWorldPos();
-                                    json += "{\"x\":" + std::to_string(pos.x()) + 
-                                            ",\"y\":" + std::to_string(pos.y()) + 
-                                            ",\"z\":" + std::to_string(pos.z()) + "}";
-                                    first = false;
-                                }
-                            }
-                            json += "]";
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
-                        }
-                        else if (req.find("GET /api/map/auto_align_floor") != std::string::npos) {
-                            ORB_SLAM3::Map* pMap = SLAM.GetAtlas()->GetCurrentMap();
-                            std::string json;
-                            if (pMap) {
-                                std::vector<ORB_SLAM3::MapPoint*> vpMPs = pMap->GetAllMapPoints();
-                                std::vector<Eigen::Vector3f> pts;
-                                for (auto* pMP : vpMPs) {
-                                    if (!pMP || pMP->isBad()) continue;
-                                    pts.push_back(pMP->GetWorldPos());
-                                }
-
-                                if (pts.size() >= 10) {
-                                    // Sort descending by Y (largest Y = physically lowest in ORB-SLAM3)
-                                    std::sort(pts.begin(), pts.end(),
-                                        [](const Eigen::Vector3f& a, const Eigen::Vector3f& b){ return a.y() > b.y(); });
-                                    size_t n_floor = std::max((size_t)10, pts.size() * 2 / 5);
-                                    pts.resize(n_floor);
-
-                                    // Estimate map scale for inlier threshold
-                                    Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
-                                    for (auto& p : pts) centroid += p;
-                                    centroid /= (float)n_floor;
-                                    float spread = 0.0f;
-                                    for (auto& p : pts) spread += (p - centroid).norm();
-                                    spread /= (float)n_floor;
-                                    float inlier_thresh = spread * 0.05f;
-                                    inlier_thresh = std::max(inlier_thresh, 0.01f);
-
-                                    // RANSAC plane fitting
-                                    Eigen::Vector3f best_normal(0.0f, -1.0f, 0.0f);
-                                    Eigen::Vector3f best_point = pts[0];
-                                    int best_inliers = 0;
-                                    std::srand(12345);
-                                    for (int iter = 0; iter < 300; iter++) {
-                                        int i0 = std::rand() % n_floor;
-                                        int i1 = std::rand() % n_floor;
-                                        int i2 = std::rand() % n_floor;
-                                        if (i0 == i1 || i1 == i2 || i0 == i2) continue;
-                                        Eigen::Vector3f v1 = pts[i1] - pts[i0];
-                                        Eigen::Vector3f v2 = pts[i2] - pts[i0];
-                                        Eigen::Vector3f normal = v1.cross(v2);
-                                        if (normal.norm() < 1e-6f) continue;
-                                        normal.normalize();
-                                        // Ensure normal points up (negative Y in ORB-SLAM3)
-                                        if (normal.y() > 0.0f) normal = -normal;
-                                        int inliers = 0;
-                                        for (const auto& p : pts) {
-                                            if (std::abs(normal.dot(p - pts[i0])) < inlier_thresh)
-                                                inliers++;
-                                        }
-                                        if (inliers > best_inliers) {
-                                            best_inliers = inliers;
-                                            best_normal = normal;
-                                            best_point = pts[i0];
-                                        }
-                                    }
-
-                                    // Rotation to align best_normal → (0, -1, 0) = up in ORB-SLAM3
-                                    Eigen::Vector3f target(0.0f, -1.0f, 0.0f);
-                                    Eigen::Quaternionf q = Eigen::Quaternionf::FromTwoVectors(best_normal, target);
-                                    float angle = 2.0f * std::acos(std::min(1.0f, std::abs(q.w())));
-                                    const float max_angle = 45.0f * M_PI / 180.0f;
-                                    if (angle < max_angle) {
-                                        Sophus::SE3f T(q.toRotationMatrix(), Eigen::Vector3f::Zero());
-                                        pMap->ApplyScaledRotation(T, 1.0f, false);
-                                        cout << ">>> [Web] Auto floor alignment applied: "
-                                             << best_inliers << "/" << n_floor << " inliers, angle="
-                                             << (angle * 180.0f / M_PI) << " deg <<<" << endl;
-                                        json = "{\"success\":true,\"inliers\":" + std::to_string(best_inliers)
-                                             + ",\"total\":" + std::to_string(n_floor)
-                                             + ",\"angle_deg\":" + std::to_string(angle * 180.0f / M_PI) + "}";
-                                    } else {
-                                        cout << ">>> [Web] Auto floor alignment skipped: angle too large ("
-                                             << (angle * 180.0f / M_PI) << " deg) <<<" << endl;
-                                        json = "{\"success\":false,\"error\":\"rotation too large\",\"angle_deg\":"
-                                             + std::to_string(angle * 180.0f / M_PI) + "}";
-                                    }
-                                } else {
-                                    json = "{\"success\":false,\"error\":\"not enough map points\"}";
-                                }
-                            } else {
-                                json = "{\"success\":false,\"error\":\"no active map\"}";
-                            }
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n" + json;
-                        }
-                        else if (req.find("GET /api/map/align_floor") != std::string::npos) {
-                            auto get_float_param = [&](const std::string& key) -> float {
-                                size_t pos = req.find(key + "=");
-                                if (pos == std::string::npos) return 0.0f;
-                                size_t end = req.find_first_of(" &\r\n", pos + key.size() + 1);
-                                try { return std::stof(req.substr(pos + key.size() + 1, end - (pos + key.size() + 1))); }
-                                catch (...) { return 0.0f; }
-                            };
-                            float pitch = get_float_param("pitch");
-                            float roll  = get_float_param("roll");
-
-                            ORB_SLAM3::Map* pMap = SLAM.GetAtlas()->GetCurrentMap();
-                            std::string json;
-                            if (pMap) {
-                                Eigen::Matrix3f R =
-                                    (Eigen::AngleAxisf(pitch, Eigen::Vector3f::UnitX()) *
-                                     Eigen::AngleAxisf(roll,  Eigen::Vector3f::UnitZ())).toRotationMatrix();
-                                Sophus::SE3f T(R, Eigen::Vector3f::Zero());
-                                pMap->ApplyScaledRotation(T, 1.0f, false);
-                                cout << ">>> [Web] Floor alignment applied: pitch=" << pitch
-                                     << " roll=" << roll << " rad <<<" << endl;
-                                json = "{\"success\":true}";
-                            } else {
-                                json = "{\"success\":false,\"error\":\"no active map\"}";
-                            }
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n" + json;
-                        }
-                        else if (req.find("GET /api/atlas/download") != std::string::npos) {
-                            cout << ">>> [Web] Exporting atlas..." << endl;
-                            bool was_mapping = !localizationMode;
-                            if (was_mapping) {
-                                cout << ">>> [Web] Temporarily switching to localization mode for safe export..." << endl;
-                                SLAM.ActivateLocalizationMode();
-                            }
-                            
-                            // Give some time for threads to stop
-                            usleep(100000); 
-
-                            SLAM.SaveAtlas("web_export", ORB_SLAM3::System::BINARY_FILE);
-
-                            if (was_mapping) {
-                                cout << ">>> [Web] Resuming mapping mode..." << endl;
-                                SLAM.DeactivateLocalizationMode();
-                            }
-                            std::ifstream file("web_export.osa", std::ios::binary | std::ios::ate);
-                            if (file.is_open()) {
-                                std::streamsize size = file.tellg();
-                                file.seekg(0, std::ios::beg);
-                                std::string headers = "HTTP/1.1 200 OK\r\n"
-                                                      "Content-Type: application/octet-stream\r\n"
-                                                      "Content-Disposition: attachment; filename=\"atlas.osa\"\r\n"
-                                                      "Content-Length: " + std::to_string(size) + "\r\n"
-                                                      "Connection: close\r\n\r\n";
-                                write(new_socket, headers.c_str(), headers.length());
-                                char fbuf[8192];
-                                while(file.read(fbuf, sizeof(fbuf)) || file.gcount() > 0) {
-                                    write(new_socket, fbuf, file.gcount());
-                                }
-                                close(new_socket);
-                                continue;
-                            }
-                            response = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nFailed to save atlas";
-                        }
-                        else if (req.find("POST /api/atlas/upload") != std::string::npos) {
-                            // Handle Expect: 100-continue
-                            if (req.find("Expect: 100-continue") != std::string::npos) {
-                                std::string continue_resp = "HTTP/1.1 100 Continue\r\n\r\n";
-                                write(new_socket, continue_resp.c_str(), continue_resp.length());
-                            }
-
-                            size_t cl_pos = req.find("Content-Length: ");
-                            if (cl_pos != std::string::npos) {
-                                size_t cl_end = req.find("\r\n", cl_pos);
-                                long content_length = std::stol(req.substr(cl_pos + 16, cl_end - (cl_pos + 16)));
-                                cout << ">>> [Web] Receiving atlas upload (" << content_length << " bytes)..." << endl;
-                                
-                                size_t body_start = header_end_pos + 4;
-                                std::string body_initial = request_data.substr(body_start);
-                                long remaining = content_length - body_initial.length();
-                                
-                                std::ofstream outfile("web_import.osa", std::ios::binary);
-                                if (body_initial.length() > 0) {
-                                    outfile.write(body_initial.data(), body_initial.length());
-                                }
-                                
-                                char fbuf[65536];
-                                while (remaining > 0) {
-                                    valread = read(new_socket, fbuf, std::min((long)sizeof(fbuf), remaining));
-                                    if (valread <= 0) {
-                                        cerr << ">>> [Web] Upload interrupted. Remaining: " << remaining << endl;
-                                        break;
-                                    }
-                                    outfile.write(fbuf, valread);
-                                    remaining -= valread;
-                                    if (content_length > 1024*1024 && (remaining % (5*1024*1024) < 65536)) {
-                                        cout << ">>> [Web] Progress: " << (100 * (content_length - remaining) / content_length) << "%" << endl;
-                                    }
-                                }
-                                outfile.close();
-                                
-                                cout << ">>> [Web] Loading uploaded atlas..." << endl;
-                                paused = true;
-                                bool success = SLAM.LoadAtlas("web_import", ORB_SLAM3::System::BINARY_FILE);
-                                if (success) {
-                                    cout << ">>> [Web] Atlas loaded successfully <<<" << endl;
-                                    response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                                } else {
-                                    cerr << ">>> [Web] Failed to load uploaded atlas <<<" << endl;
-                                    response = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nLoad failed";
-                                }
-                            } else {
-                                response = "HTTP/1.1 411 Length Required\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nLength Required";
-                            }
-                        }
-                        else if (req.find("GET /api/status") != std::string::npos) {
-                            long unsigned int current_map_id = 0;
-                            if(SLAM.GetAtlas()->GetCurrentMap()) {
-                                current_map_id = SLAM.GetAtlas()->GetCurrentMap()->GetId();
-                            }
-
-                            std::string json = "{";
-                            json += "\"localizationMode\": " + std::string(localizationMode ? "true" : "false") + ",";
-                            json += "\"paused\": " + std::string(paused ? "true" : "false") + ",";
-                            json += "\"currentMapId\": " + std::to_string(current_map_id) + ",";
-                            json += "\"maps\": [";
-                            
-                            std::vector<ORB_SLAM3::Map*> maps = SLAM.GetAtlas()->GetAllMaps();
-                            bool first = true;
-                            for (ORB_SLAM3::Map* pMap : maps) {
-                                if (!pMap) continue;
-                                if (!first) json += ",";
-                                json += "{";
-                                json += "\"id\": " + std::to_string(pMap->GetId()) + ",";
-                                json += "\"keyframes\": " + std::to_string(pMap->KeyFramesInMap()) + ",";
-                                json += "\"mappoints\": " + std::to_string(pMap->MapPointsInMap());
-                                json += "}";
-                                first = false;
-                            }
-                            json += "]}";
-
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n" + json;
-                        } 
-                        else if (req.find("GET /loc ") != std::string::npos) {
-                            if (!localizationMode) {
-                                localizationMode = true;
-                                SLAM.GetAtlas()->SwitchToMap(map_id);
-                                SLAM.ActivateLocalizationMode();
-                                SLAM.ForceRelocalization();
-                                cout << ">>> [Web] Switched to Localization Mode <<<" << endl;
-                            }
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        } else if (req.find("GET /map ") != std::string::npos) {
-                            if (localizationMode) {
-                                localizationMode = false;
-                                SLAM.DeactivateLocalizationMode();
-                                cout << ">>> [Web] Switched to Mapping Mode <<<" << endl;
-                            }
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        } else if (req.find("GET /pause ") != std::string::npos) {
-                            paused = true;
-                            cout << ">>> [Web] Paused Processing <<<" << endl;
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        } else if (req.find("GET /resume ") != std::string::npos) {
-                            paused = false;
-                            cout << ">>> [Web] Resumed Processing <<<" << endl;
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        } else if (req.find("GET /switchmap?id=") != std::string::npos) {
-                            size_t pos_switch = req.find("GET /switchmap?id=");
-                            size_t end_pos_switch = req.find(" HTTP", pos_switch);
-                            if (end_pos_switch != std::string::npos) {
-                                std::string id_str = req.substr(pos_switch + 18, end_pos_switch - (pos_switch + 18));
-                                long unsigned int target_map_id = std::stoul(id_str);
-                                SLAM.SwitchToMap(target_map_id);
-                                if (localizationMode) {
-                                    SLAM.ForceRelocalization();
-                                }
-                                cout << ">>> [Web] Switched to Map ID: " << target_map_id << " <<<" << endl;
-                            }
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        } else if (req.find("GET /newmap ") != std::string::npos) {
-                            SLAM.GetAtlas()->CreateNewMap();
-                            long unsigned int new_map_id = SLAM.GetAtlas()->GetCurrentMap()->GetId();
-                            SLAM.SwitchToMap(new_map_id);
-                            cout << ">>> [Web] Created and switched to New Map ID: " << new_map_id << " <<<" << endl;
-                            response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nOK";
-                        } else {
-                            // Serve static files
-                            size_t start_pos = req.find("GET /");
-                            if (start_pos != std::string::npos) {
-                                start_pos += 5;
-                                size_t end_pos = req.find(" HTTP", start_pos);
-                                if (end_pos != std::string::npos) {
-                                    std::string path = req.substr(start_pos, end_pos - start_pos);
-                                    if (path.empty()) {
-                                        path = "index.html";
-                                    }
-                                    
-                                    // Prevent directory traversal attacks
-                                    if (path.find("..") != std::string::npos || path.find("//") != std::string::npos || path[0] == '/') {
-                                        response = "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden";
-                                    } else {
-                                        std::string full_path = "html/" + path;
-                                        std::ifstream file(full_path, std::ios::binary);
-                                        if (file.is_open()) {
-                                            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-                                            std::string content_type = "text/html";
-                                            if (path.find(".css") != std::string::npos) content_type = "text/css";
-                                            else if (path.find(".js") != std::string::npos) content_type = "application/javascript";
-                                            else if (path.find(".png") != std::string::npos) content_type = "image/png";
-                                            
-                                            response = "HTTP/1.1 200 OK\r\nContent-Type: " + content_type + "\r\nConnection: close\r\n\r\n" + content;
-                                        } else {
-                                            response = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nFile not found: " + full_path;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if (response.empty()) {
-                            response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request";
-                        }
-                        
-                        int r = write(new_socket, response.c_str(), response.length());
-                        (void)r; // suppress warning
-                    }
-                    close(new_socket);
+    // Control thread: HTTP server + stdin commands
+    std::thread controlThread([&]() {
+        // Run the HTTP server in this thread; handle stdin via select() alongside
+        // the server socket.  We call server.run() which blocks, but we need stdin
+        // too — so we run the accept loop ourselves via a thin wrapper that also
+        // monitors STDIN_FILENO.
+        //
+        // For simplicity: dedicate the control thread fully to WebServer::run()
+        // and read stdin in a second lightweight thread.
+        std::thread stdinThread([&]() {
+            while (flags.running) {
+                fd_set fds;
+                FD_ZERO(&fds);
+                FD_SET(STDIN_FILENO, &fds);
+                struct timeval tv = {1, 0};
+                if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) > 0
+                    && FD_ISSET(STDIN_FILENO, &fds)) {
+                    std::string cmd;
+                    if (std::cin >> cmd)
+                        handleStdinCommand(cmd, slam, flags, localizationMode, mapId);
                 }
             }
-        }
-        close(server_fd);
+        });
+
+        server.run(); // blocks until flags.running == false
+
+        stdinThread.join();
     });
 
-    cout << endl << "-------" << endl;
-    cout << "Start processing sequence ..." << endl;
+    // ---- Main tracking loop ------------------------------------------------
+    std::cout << "\n-------\nStart processing sequence ...\n";
+    cv::Mat frame;
 
-    // Main loop
-    cv::Mat im;
-
-    //Install signal handler 
-    signal(SIGINT, sigint_handler);
-
-    while(running)  //for(int ni=0; ni<nImages; ni++)
-    {
-        double tframe = 0.0;
-        #ifdef COMPILEDWITHC11
-            std::chrono::steady_clock::time_point read_time = std::chrono::steady_clock::now();
-            tframe = std::chrono::duration_cast<std::chrono::milliseconds>(read_time.time_since_epoch()).count();
-        #else
-            std::chrono::monotonic_clock::time_point read_time = std::chrono::monotonic_clock::now();
-            tframe = std::chrono::duration_cast<std::chrono::milliseconds>(read_time.time_since_epoch()).count();
-        #endif
-
-        // Read image from camera continuously to keep buffer fresh
-        cap.read(im);
-        
-        if ( im.empty() ) {
-            cout << "No image received" << endl;
-            usleep(100000);
-            continue;
-        }
-        
-        if(imageScale != 1.f)
-        {
-            int width = im.cols * imageScale;
-            int height = im.rows * imageScale;
-            cv::resize(im, im, cv::Size(width, height));
-        }
-
-        bool is_calibrating = false;
-        bool do_capture = false;
-        {
-            std::lock_guard<std::mutex> lock(calibration_mutex);
-            is_calibrating = calibration_mode;
-            do_capture = capture_requested;
-        }
-
-        if (is_calibrating) {
-            if (do_capture) {
-                cv::Mat gray;
-                cv::cvtColor(im, gray, cv::COLOR_BGR2GRAY);
-                std::vector<cv::Point2f> corners;
-                bool found = cv::findChessboardCorners(gray, board_size, corners, 
-                                                       cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
-                
-                cv::Mat display_im = im.clone();
-                cv::drawChessboardCorners(display_im, board_size, corners, found);
-
-                {
-                    std::lock_guard<std::mutex> lock(calibration_mutex);
-                    if (found) {
-                        cv::cornerSubPix(gray, corners, cv::Size(11, 11), cv::Size(-1, -1), 
-                                         cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1));
-                        image_points.push_back(corners);
-                        
-                        std::vector<cv::Point3f> obj;
-                        for (int i = 0; i < board_size.height; i++) {
-                            for (int j = 0; j < board_size.width; j++) {
-                                obj.push_back(cv::Point3f(j * board_square_size, i * board_square_size, 0));
-                            }
-                        }
-                        object_points.push_back(obj);
-                        capture_count++;
-                        last_capture_success = true;
-                    } else {
-                        last_capture_success = false;
-                    }
-                    
-                    latest_calibration_image = display_im;
-                    capture_requested = false;
-                }
-            }
-            usleep(30000); // Sleep briefly to not spin out of control during calibration
-            continue;
-        }
-
-        if(paused) {
-            usleep(100000); // Sleep for 100ms when paused to avoid busy looping
-            continue;
-        }
-
+    while (flags.running) {
 #ifdef COMPILEDWITHC11
-        std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+        auto now   = std::chrono::steady_clock::now();
 #else
-        std::chrono::monotonic_clock::time_point t1 = std::chrono::monotonic_clock::now();
+        auto now   = std::chrono::monotonic_clock::now();
 #endif
+        double tframe = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            now.time_since_epoch()).count();
 
-        // Pass the image to the SLAM system
-        Sophus::SE3f Tcw = SLAM.TrackMonocular(im, tframe);
+        // Always drain the capture buffer so we get the freshest frame
+        cap.read(frame);
+        if (frame.empty()) {
+            std::cout << "No image received\n";
+            usleep(kPauseSleepUs);
+            continue;
+        }
 
-        if (SLAM.GetTrackingState() == ORB_SLAM3::Tracking::OK || SLAM.GetTrackingState() == ORB_SLAM3::Tracking::RECENTLY_LOST) {
-            Sophus::SE3f Twc = Tcw.inverse();
-            Eigen::Vector3f t = Twc.translation();
+        if (imageScale != 1.f) {
+            cv::resize(frame, frame,
+                       cv::Size(static_cast<int>(frame.cols * imageScale),
+                                static_cast<int>(frame.rows * imageScale)));
+        }
+
+        // Calibration mode: process frame, skip SLAM tracking
+        if (calib.processFrame(frame)) {
+            usleep(kCalibSleepUs);
+            continue;
+        }
+
+        if (flags.paused) {
+            usleep(kPauseSleepUs);
+            continue;
+        }
+
+        // Track
+        Sophus::SE3f Tcw = slam.TrackMonocular(frame, tframe);
+
+        const int trackState = slam.GetTrackingState();
+        if (trackState == ORB_SLAM3::Tracking::OK
+         || trackState == ORB_SLAM3::Tracking::RECENTLY_LOST) {
+            Sophus::SE3f     Twc = Tcw.inverse();
+            Eigen::Vector3f  t   = Twc.translation();
             Eigen::Quaternionf q = Twc.unit_quaternion();
-            
-            {
-                std::lock_guard<std::mutex> lock(pose_mutex);
-                g_pose_x = t.x();
-                g_pose_y = t.y();
-                g_pose_z = t.z();
-                g_pose_qx = q.x();
-                g_pose_qy = q.y();
-                g_pose_qz = q.z();
-                g_pose_qw = q.w();
-                g_pose_valid = true;
-            }
-            cout << "Position " << Tcw.translation().transpose() << " Rotation " << Tcw.angleX() << "," << Tcw.angleY() << "," << Tcw.angleZ() <<  endl;
+            pose.update(t.x(), t.y(), t.z(), q.x(), q.y(), q.z(), q.w());
+            std::cout << "Position " << Tcw.translation().transpose()
+                      << "  Rotation " << Tcw.angleX() << ","
+                                       << Tcw.angleY() << ","
+                                       << Tcw.angleZ() << "\n";
         } else {
-            std::lock_guard<std::mutex> lock(pose_mutex);
-            g_pose_valid = false;
+            pose.invalidate();
         }
-
-
-
-#ifdef COMPILEDWITHC11
-        std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-#else
-        std::chrono::monotonic_clock::time_point t2 = std::chrono::monotonic_clock::now();
-#endif
-
-        double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();
-
     }
 
-    cout << "End of sequence reached. Waiting 5 seconds before closing everything." << endl;
-    running = false; // ensure thread can exit
+    // ---- Shutdown ----------------------------------------------------------
+    std::cout << "Main loop ended. Shutting down...\n";
+    flags.running = false;
     controlThread.join();
-    usleep(5000000);
 
-    // Stop all threads
-    SLAM.Shutdown();
-
-    // Tracking time statistics
-    // Save camera trajectory
-    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+    slam.Shutdown();
+    slam.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
 
     return 0;
 }
-
