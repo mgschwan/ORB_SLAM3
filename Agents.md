@@ -62,12 +62,22 @@ ORB_SLAM3/
 │       ├── KannalaBrandt8.cpp
 │       └── Pinhole.cpp
 │
+├── localization_service/    - Main application (live camera SLAM / localization service)
+│   ├── src/
+│   │   └── localization_service_host.cc - [CUSTOM] Live camera stream with localization mode
+│   ├── localization_service_host        - [BUILT EXECUTABLE]
+│   ├── html/
+│   │   ├── index.html       - Web frontend for SLAM control
+│   │   ├── viewer.html      - Pose/map viewer
+│   │   └── calibration.html - Camera calibration helper
+│   ├── tools/
+│   │   └── tello_camera_server.py - Tello drone camera relay server
+│   └── example.yaml         - Example camera configuration
+│
 ├── Examples/                - Active examples (only monocular built by modified CMake)
 │   ├── Monocular/
 │   │   ├── mono_tum_mgschwan.cc       - [CUSTOM] TUM dataset with localization mode
 │   │   ├── mono_tum_mgschwan          - [BUILT EXECUTABLE]
-│   │   ├── remote_tum.cc              - [CUSTOM] Live camera stream with localization mode
-│   │   ├── remote_tum                 - [BUILT EXECUTABLE]
 │   │   ├── mgschwan.yaml              - Camera config (store map)
 │   │   ├── mgschwan_localize.yaml     - Camera config (load map for localization)
 │   │   ├── remote_cam_store.yaml      - Remote cam config (store map)

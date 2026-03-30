@@ -129,15 +129,14 @@ ${PROJECT_SOURCE_DIR}/Thirdparty/g2o/lib/libg2o.so
 # Build examples
 
 #Monocular examples
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/localization_service)
+
+add_executable(localization_service_host
+        localization_service/src/localization_service_host.cc)
+target_link_libraries(localization_service_host ${PROJECT_NAME} -lGL)
+
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Monocular)
-
-add_executable(mono_tum_mgschwan
-        Examples/Monocular/mono_tum_mgschwan.cc)
-target_link_libraries(mono_tum_mgschwan ${PROJECT_NAME} -lGL)
-
-add_executable(remote_tum
-        Examples/Monocular/remote_tum.cc)
-target_link_libraries(remote_tum ${PROJECT_NAME} -lGL)
 
 add_executable(inspect_osa
         Examples/Monocular/inspect_osa.cc)
