@@ -28,13 +28,15 @@ WebServer::WebServer(ORB_SLAM3::System&  slam,
                      PoseState&          pose,
                      CalibrationManager& calib,
                      std::atomic<bool>&  localizationMode,
-                     long unsigned int   initialMapId)
+                     long unsigned int   initialMapId,
+                     std::string         staticFileRoot)
     : slam_(slam)
     , flags_(flags)
     , pose_(pose)
     , calib_(calib)
     , localizationMode_(localizationMode)
     , initialMapId_(initialMapId)
+    , staticFileRoot_(std::move(staticFileRoot))
 {}
 
 WebServer::~WebServer()
@@ -618,7 +620,7 @@ bool WebServer::routeStaticFile(const std::string& req, std::string& response)
         return true;
     }
 
-    const std::string fullPath = std::string(kStaticFileRoot) + path;
+    const std::string fullPath = staticFileRoot_ + path;
     std::ifstream file(fullPath, std::ios::binary);
     if (!file.is_open()) {
         response = make404("File not found: " + fullPath);

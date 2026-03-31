@@ -29,7 +29,8 @@ public:
               PoseState&          pose,
               CalibrationManager& calib,
               std::atomic<bool>&  localizationMode,
-              long unsigned int   initialMapId);
+              long unsigned int   initialMapId,
+              std::string         staticFileRoot = kStaticFileRoot);
 
     ~WebServer();
 
@@ -102,6 +103,7 @@ private:
     CalibrationManager& calib_;
     std::atomic<bool>&  localizationMode_;
     long unsigned int   initialMapId_;
+    std::string         staticFileRoot_;
     int                 serverFd_{-1};
 };
 

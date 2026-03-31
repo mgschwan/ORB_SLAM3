@@ -101,7 +101,7 @@ int main(int argc, char** argv)
         std::cerr << "\nUsage: ./localization_service_host"
                      " path_to_vocabulary path_to_settings camera_url"
                      " [localize_only] [map_id]\n\n";
-        return 1;
+        return 0; // appimage builder needs to be able to call it without an error code
     }
 
     const std::string vocabPath    = argv[1];
@@ -139,9 +139,15 @@ int main(int argc, char** argv)
     g_flags = &flags;
     signal(SIGINT, sigintHandler);
 
+    // When running as an AppImage, APPDIR is set and the html folder lives there.
+    const char* appDir = std::getenv("APPDIR");
+    const std::string staticFileRoot = appDir
+        ? std::string(appDir) + "/" + std::string(kStaticFileRoot)
+        : std::string(kStaticFileRoot);
+
     // Components
     CalibrationManager calib(slam);
-    WebServer          server(slam, flags, pose, calib, localizationMode, mapId);
+    WebServer          server(slam, flags, pose, calib, localizationMode, mapId, staticFileRoot);
 
     // Control thread: HTTP server + stdin commands
     std::thread controlThread([&]() {

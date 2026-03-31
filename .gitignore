@@ -94,3 +94,8 @@ borrar/*
 
 localization_service/localization_service_host
 
+AppDir/
+appimage-build/
+*.AppImage
+.vscode/
+*.zsync
