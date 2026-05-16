@@ -5,15 +5,24 @@
 #include <mutex>
 
 #include <opencv2/core/mat.hpp>
+#include <sophus/se3.hpp>
 
 namespace localization_service {
 
 struct IngestFrame {
     cv::Mat image;
     double  timestamp{0.0};  // milliseconds (same unit as TrackMonocular tframe)
+
+    // Optional IMU measurement attached to this frame.
     bool    hasImu{false};
     float   ax{0}, ay{0}, az{0};  // accelerometer  m/s²
     float   gx{0}, gy{0}, gz{0};  // gyroscope      rad/s
+
+    // Optional external pose for this frame (Tcw: transforms world → camera,
+    // ORB-SLAM3 internal convention).  When set, Tracking skips its feature-
+    // based pose estimator and pose optimizer and uses this pose directly.
+    bool         hasPose{false};
+    Sophus::SE3f Tcw;
 };
 
 // Thread-safe, bounded frame queue shared between the ingest route(s) and the

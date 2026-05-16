@@ -213,6 +213,8 @@ int main(int argc, char** argv)
                 continue;
             frame  = std::move(ingest.image);
             tframe = ingest.timestamp;
+            if (ingest.hasPose)
+                slam.SetNextFramePose(ingest.Tcw);
             // IMU data from ingest.{ax,ay,az,gx,gy,gz} is available here
             // for future TrackMonocular_Inertial support.
         } else {

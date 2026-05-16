@@ -635,6 +635,24 @@ std::string WebServer::handleFramePost(int fd, const std::string& rawRequest,
         frame.gz = queryFloat(rawRequest, "gz");
     }
 
+    // Optional external pose.  Client sends Twc (camera position in world,
+    // matching the convention of /api/stream/pose).  We store the inverse Tcw
+    // which is ORB-SLAM3's internal convention.
+    const std::string txStr = queryParam(rawRequest, "tx");
+    if (!txStr.empty()) {
+        Eigen::Vector3f    t(queryFloat(rawRequest, "tx"),
+                             queryFloat(rawRequest, "ty"),
+                             queryFloat(rawRequest, "tz"));
+        Eigen::Quaternionf q(queryFloat(rawRequest, "qw"),   // Eigen: w,x,y,z
+                             queryFloat(rawRequest, "qx"),
+                             queryFloat(rawRequest, "qy"),
+                             queryFloat(rawRequest, "qz"));
+        q.normalize();
+        Sophus::SE3f Twc(q.toRotationMatrix(), t);
+        frame.hasPose = true;
+        frame.Tcw     = Twc.inverse();
+    }
+
     if (!ingestQueue_->push(std::move(frame)))
         return "HTTP/1.1 503 Service Unavailable\r\n"
                "Content-Type: application/json\r\n"

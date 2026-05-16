@@ -185,6 +185,20 @@ public:
     bool mbAllowMapCreation;
     void SetAllowMapCreation(bool allow) { mbAllowMapCreation = allow; }
 
+    // Inject an external pose for the next frame.  When set, Tracking skips
+    // its feature-based estimator and PoseOptimization for that frame.
+    // TrackLocalMap still runs for map-point association.
+    // Thread-safe: called from the ingest path before TrackMonocular.
+    void SetNextFramePose(const Sophus::SE3f& Tcw);
+
+    bool         mbHasForcedPose{false};
+    Sophus::SE3f mForcedPose;   // Tcw for the next frame
+
+    // Saved initial-frame pose for the forced-initialization path (Phase 2).
+    // Set when mInitialFrame is captured and a forced pose was provided.
+    bool         mbInitialFrameHasForcedPose{false};
+    Sophus::SE3f mInitialFrameForcedPose;
+
     void Reset(bool bLocMap = false);
     void ResetActiveMap(bool bLocMap = false);
 

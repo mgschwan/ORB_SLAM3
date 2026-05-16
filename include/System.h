@@ -199,6 +199,12 @@ public:
     // When allow=true (the default) the original upstream behaviour is restored.
     void SetAllowMapCreation(bool allow);
 
+    // Inject an external pose for the next frame submitted to TrackMonocular.
+    // The tracker will skip feature-based prediction and PoseOptimization for
+    // that frame; TrackLocalMap still runs for map-point association.
+    // Tcw is the camera-to-world inverse (ORB-SLAM3 internal convention).
+    void SetNextFramePose(const Sophus::SE3f& Tcw);
+
     void SaveAtlas(const string &filename, int type);
     bool LoadAtlas(const string &filename, int type);
 

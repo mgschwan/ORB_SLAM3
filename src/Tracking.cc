@@ -1934,6 +1934,8 @@ void Tracking::Track()
     {
         // System is initialized. Track Frame.
         bool bOK;
+        bool         bForcedPoseFrame = false;  // true when external pose was consumed this frame
+        Sophus::SE3f savedForcedPose;           // copy of the external pose for post-TLM restore
 
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartPosePred = std::chrono::steady_clock::now();
@@ -1948,6 +1950,18 @@ void Tracking::Track()
             // you explicitly activate the "only tracking" mode.
             if(mState==OK)
             {
+                // External pose injection: skip feature-based prediction entirely.
+                if(mbHasForcedPose)
+                {
+                    Verbose::PrintMess("TRACK: Using externally provided pose", Verbose::VERBOSITY_NORMAL);
+                    savedForcedPose  = mForcedPose;
+                    bForcedPoseFrame = true;
+                    mCurrentFrame.SetPose(mForcedPose);
+                    mbHasForcedPose  = false;
+                    bOK = true;
+                }
+                else
+                {
 
                 // Local Mapping might have changed some MapPoints tracked in last frame
                 CheckReplacedInLastFrame();
@@ -1984,6 +1998,7 @@ void Tracking::Track()
                         mState = LOST;
                     }
                 }
+                } // end else (feature-based prediction)
             }
             else
             {
@@ -2127,7 +2142,14 @@ void Tracking::Track()
             if(bOK)
             {
                 bOK = TrackLocalMap();
-
+                if(bForcedPoseFrame)
+                {
+                    // TrackLocalMap ran UpdateLocalMap + SearchLocalPoints for map-point
+                    // association, but its PoseOptimization result must not overwrite the
+                    // trusted external pose.  Restore it and declare tracking successful.
+                    mCurrentFrame.SetPose(savedForcedPose);
+                    bOK = true;
+                }
             }
             if(!bOK)
                 cout << "Fail to track local map!" << endl;
@@ -2301,7 +2323,9 @@ void Tracking::Track()
 
 
 
-
+    //TODO: mgschwan. Do we really need this. We want a service that can run indefinitely
+    //if we store the trajectory it will slowly fill up our memory which we don't want
+    //and we don't need the trajectory
     if(mState==OK || mState==RECENTLY_LOST)
     {
         // Store frame pose information to retrieve the complete camera trajectory afterwards.
@@ -2467,6 +2491,16 @@ void Tracking::MonocularInitialization()
 
             fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
 
+            // Save forced pose of the initial frame for Phase-2 pose injection
+            // (overriding both initial-frame and current-frame poses before
+            // CreateInitialMapMonocular so triangulation uses external world coords).
+            if(mbHasForcedPose)
+            {
+                mbInitialFrameHasForcedPose = true;
+                mInitialFrameForcedPose     = mForcedPose;
+                mbHasForcedPose             = false;
+            }
+
             if (mSensor == System::IMU_MONOCULAR)
             {
                 if(mpImuPreintegratedFromLastKF)
@@ -2505,13 +2539,27 @@ void Tracking::MonocularInitialization()
         // Check if there are enough correspondences
         if(nmatches<100)
         {
-            cout << "Monocular Tracking tried to initialize but not enough matches" << endl;
+            cout << "Monocular Tracking tried to initialize but not enough matches"
+                 << " (found=" << nmatches << "/100 required"
+                 << ", initKPs=" << mInitialFrame.mvKeysUn.size()
+                 << ", curKPs=" << mCurrentFrame.mvKeysUn.size()
+                 << ", initForcedPose=" << (mbInitialFrameHasForcedPose ? "yes" : "no")
+                 << ", curForcedPose=" << (mbHasForcedPose ? "yes" : "no")
+                 << ")" << endl;
             mbReadyToInitializate = false;
             return;
         }
 
         Sophus::SE3f Tcw;
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
+
+        cout << "Monocular Tracking attempting reconstruction"
+             << " (matches=" << nmatches
+             << ", initKPs=" << mInitialFrame.mvKeysUn.size()
+             << ", curKPs=" << mCurrentFrame.mvKeysUn.size()
+             << ", initForcedPose=" << (mbInitialFrameHasForcedPose ? "yes" : "no")
+             << ", curForcedPose=" << (mbHasForcedPose ? "yes" : "no")
+             << ")" << endl;
 
         if(mpCamera->ReconstructWithTwoViews(mInitialFrame.mvKeysUn,mCurrentFrame.mvKeysUn,mvIniMatches,Tcw,mvIniP3D,vbTriangulated))
         {
@@ -2528,11 +2576,13 @@ void Tracking::MonocularInitialization()
             mInitialFrame.SetPose(Sophus::SE3f());
             mCurrentFrame.SetPose(Tcw);
 
-            cout << "Monocular Tracking initialized create initial map" << endl;
+            cout << "Monocular Tracking initialized create initial map"
+                 << " (triangulated=" << nmatches << " points)" << endl;
 
             CreateInitialMapMonocular();
         } else {
-            cout << "Monocular Tracking tried to initialize but reconstruction failed" << endl;
+            cout << "Monocular Tracking tried to initialize but reconstruction failed"
+                 << " (matches=" << nmatches << ")" << endl;
         }
     }
 }
@@ -2605,7 +2655,11 @@ void Tracking::CreateInitialMapMonocular()
 
     if(medianDepth<0 || pKFcur->TrackedMapPoints(1)<50) // TODO Check, originally 100 tracks
     {
-        Verbose::PrintMess("Wrong initialization, reseting...", Verbose::VERBOSITY_QUIET);
+        cout << "Wrong initialization, reseting..."
+             << " (medianDepth=" << medianDepth
+             << ", trackedMapPoints=" << pKFcur->TrackedMapPoints(1)
+             << ", mapPointsInMap=" << mpAtlas->MapPointsInMap()
+             << ")" << endl;
         mpSystem->ResetActiveMap();
         return;
     }
@@ -4170,5 +4224,11 @@ void Tracking::Release()
     mbStopRequested = false;
 }
 #endif
+
+void Tracking::SetNextFramePose(const Sophus::SE3f& Tcw)
+{
+    mbHasForcedPose = true;
+    mForcedPose     = Tcw;
+}
 
 } //namespace ORB_SLAM

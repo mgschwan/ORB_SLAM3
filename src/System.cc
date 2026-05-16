@@ -490,9 +490,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
         for(size_t i_imu = 0; i_imu < vImuMeas.size(); i_imu++)
             mpTracker->GrabImuData(vImuMeas[i_imu]);
 
-    cout << "TrackMonocular: calling GrabImageMonocular()" << endl;
     Sophus::SE3f Tcw = mpTracker->GrabImageMonocular(imToFeed,timestamp,filename);
-    cout << "TrackMonocular: out of GrabImageMonocular()" << endl;
 
     unique_lock<mutex> lock2(mMutexState);
     mTrackingState = mpTracker->mState;
@@ -1404,6 +1402,11 @@ void System::SwitchToMap(long unsigned int mapId)
 void System::SetAllowMapCreation(bool allow)
 {
     mpTracker->SetAllowMapCreation(allow);
+}
+
+void System::SetNextFramePose(const Sophus::SE3f& Tcw)
+{
+    mpTracker->SetNextFramePose(Tcw);
 }
 
 int System::GetTrackingState()
