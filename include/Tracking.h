@@ -199,6 +199,11 @@ public:
     bool         mbInitialFrameHasForcedPose{false};
     Sophus::SE3f mInitialFrameForcedPose;
 
+    // True when CreateInitialMapMonocular was called with both frames having
+    // forced poses — map points are already in metric world coordinates so
+    // the median-depth rescaling step must be skipped.
+    bool         mbForcedPoseInitialization{false};
+
     void Reset(bool bLocMap = false);
     void ResetActiveMap(bool bLocMap = false);
 
@@ -259,7 +264,7 @@ protected:
     void SearchLocalPoints();
 
     bool NeedNewKeyFrame();
-    void CreateNewKeyFrame();
+    void CreateNewKeyFrame(bool bForcedPose = false);
 
     // Perform preintegration from last frame
     void PreintegrateIMU();

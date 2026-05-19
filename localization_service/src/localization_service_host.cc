@@ -110,8 +110,9 @@ int main(int argc, char** argv)
     if (argc < 4) {
         std::cerr << "\nUsage: ./localization_service_host"
                      " path_to_vocabulary path_to_settings camera_url|none"
-                     " [localize_only] [map_id]\n\n"
-                     "  camera_url: V4L2 device, MJPEG/RTSP URL, or 'none' to use POST /api/frame\n\n";
+                     " [localize_only] [map_id] [--port N]\n\n"
+                     "  camera_url: V4L2 device, MJPEG/RTSP URL, or 'none' to use POST /api/frame\n"
+                     "  --port N  : HTTP server port (default: " << LOCALIZATION_SERVICE_PORT << ")\n\n";
         return 0; // appimage builder needs to be able to call it without an error code
     }
 
@@ -121,6 +122,15 @@ int main(int argc, char** argv)
     const bool        startInLocMode = (argc >= 5);
     const long unsigned int mapId  = (argc >= 6) ? std::stoul(argv[5]) : 0;
     const bool        useIngest    = (cameraSource == "none");
+
+    // Optional --port flag (can appear anywhere after the 3 positional args)
+    int port = LOCALIZATION_SERVICE_PORT;
+    for (int i = 4; i < argc - 1; ++i) {
+        if (std::string(argv[i]) == "--port") {
+            port = std::stoi(argv[i + 1]);
+            break;
+        }
+    }
 
     cv::VideoCapture cap;
     if (!useIngest) {
@@ -170,7 +180,7 @@ int main(int argc, char** argv)
     // Components
     CalibrationManager calib(slam);
     WebServer          server(slam, flags, pose, calib, localizationMode, allowMapCreation, mapId,
-                              useIngest ? &ingestQueue : nullptr, staticFileRoot);
+                              useIngest ? &ingestQueue : nullptr, staticFileRoot, port);
 
     // Control thread: HTTP server + stdin commands
     std::thread controlThread([&]() {

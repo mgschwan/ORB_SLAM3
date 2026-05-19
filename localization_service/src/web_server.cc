@@ -34,7 +34,8 @@ WebServer::WebServer(ORB_SLAM3::System&  slam,
                      std::atomic<bool>&  allowMapCreation,
                      long unsigned int   initialMapId,
                      IngestQueue*        ingestQueue,
-                     std::string         staticFileRoot)
+                     std::string         staticFileRoot,
+                     int                 port)
     : slam_(slam)
     , flags_(flags)
     , pose_(pose)
@@ -44,6 +45,7 @@ WebServer::WebServer(ORB_SLAM3::System&  slam,
     , initialMapId_(initialMapId)
     , ingestQueue_(ingestQueue)
     , staticFileRoot_(std::move(staticFileRoot))
+    , port_(port)
 {}
 
 WebServer::~WebServer()
@@ -71,7 +73,7 @@ void WebServer::run()
         return;
 
     std::cout << "\n--------------------------------------------------------\n"
-              << "Remote control running at http://localhost:" << LOCALIZATION_SERVICE_PORT << "\n"
+              << "Remote control running at http://localhost:" << port_ << "\n"
               << "Console commands: 'loc', 'map', 'quit', 'pause', 'resume'\n"
               << "--------------------------------------------------------\n\n";
 
@@ -111,10 +113,10 @@ bool WebServer::setupSocket()
     struct sockaddr_in addr{};
     addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port        = htons(LOCALIZATION_SERVICE_PORT);
+    addr.sin_port        = htons(port_);
 
     if (bind(serverFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        std::cerr << "WebServer: bind failed on port " << LOCALIZATION_SERVICE_PORT << "\n";
+        std::cerr << "WebServer: bind failed on port " << port_ << "\n";
         closeServer();
         return false;
     }

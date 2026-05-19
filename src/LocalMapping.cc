@@ -394,6 +394,19 @@ void LocalMapping::CreateNewMapPoints()
         nn=30;
     vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn);
 
+    // For forced-pose KFs with no covisibility (0 map-point observations),
+    // fall back to the temporal predecessor chain so triangulation can still run.
+    if(vpNeighKFs.empty() && mpCurrentKeyFrame->mbForcedPose)
+    {
+        KeyFrame* pKF = mpCurrentKeyFrame->mPrevKF;
+        int count = 0;
+        while(pKF && count++ < nn)
+        {
+            vpNeighKFs.push_back(pKF);
+            pKF = pKF->mPrevKF;
+        }
+    }
+
     if (mbInertial)
     {
         KeyFrame* pKF = mpCurrentKeyFrame;

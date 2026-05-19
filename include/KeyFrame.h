@@ -304,6 +304,7 @@ public:
     void SetKeyFrameDatabase(KeyFrameDatabase* pKFDB);
 
     bool bImu;
+    bool mbForcedPose{false};
 
     // The following variables are accesed from only 1 thread or never change (no mutex needed).
 public:
@@ -478,7 +479,7 @@ protected:
     // Bad flags
     bool mbNotErase;
     bool mbToBeErased;
-    bool mbBad;    
+    bool mbBad;
 
     float mHalfBaseline; // Only for visualization
 

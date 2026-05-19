@@ -2149,6 +2149,16 @@ void Tracking::Track()
                     // trusted external pose.  Restore it and declare tracking successful.
                     mCurrentFrame.SetPose(savedForcedPose);
                     bOK = true;
+                    // PoseOptimization's outlier flags reflect the optimizer's pose, not
+                    // the trusted external one.  Clear them so SearchLocalPoints matches
+                    // survive the outlier-removal step and reach CreateNewKeyFrame.
+                    int nMPsBefore = 0;
+                    for(int i = 0; i < mCurrentFrame.N; i++)
+                    {
+                        if(mCurrentFrame.mvpMapPoints[i]) nMPsBefore++;
+                        mCurrentFrame.mvbOutlier[i] = false;
+                    }
+                    cout << "TRACK: Forced pose restored, keeping " << nMPsBefore << " map point matches" << endl;
                 }
             }
             if(!bOK)
@@ -2267,11 +2277,18 @@ void Tracking::Track()
 #endif
             bool bNeedKF = NeedNewKeyFrame();
 
+            // When an external pose was provided, the match-ratio condition in
+            // NeedNewKeyFrame() is irrelevant — the pose is trusted regardless of
+            // how many map points were matched.  Force keyframe insertion whenever
+            // the local mapper can accept one, so new map points get triangulated.
+            if(bForcedPoseFrame && !bNeedKF)
+                bNeedKF = mpLocalMapper->AcceptKeyFrames() || mpLocalMapper->IsInitializing();
+
             // Check if we need to insert a new keyframe
             // if(bNeedKF && bOK)
             if(bNeedKF && (bOK || (mInsertKFsLost && mState==RECENTLY_LOST &&
                                    (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD))))
-                CreateNewKeyFrame();
+                CreateNewKeyFrame(bForcedPoseFrame);
 
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndNewKF = std::chrono::steady_clock::now();
@@ -2572,9 +2589,42 @@ void Tracking::MonocularInitialization()
                 }
             }
 
-            // Set Frame Poses
-            mInitialFrame.SetPose(Sophus::SE3f());
-            mCurrentFrame.SetPose(Tcw);
+            // If both frames carry external metric poses, transform the
+            // reconstructed points into world coordinates so that subsequent
+            // forced-pose frames can match them.  Otherwise fall back to the
+            // standard "initial frame = origin" convention.
+            if(mbInitialFrameHasForcedPose && mbHasForcedPose)
+            {
+                Sophus::SE3f Twc_init = mInitialFrameForcedPose.inverse();
+                Sophus::SE3f Twc_cur  = mForcedPose.inverse();
+                float actual_baseline = (Twc_cur.translation() - Twc_init.translation()).norm();
+                float recon_baseline  = Tcw.translation().norm();
+                float scale = (recon_baseline > 1e-6f) ? (actual_baseline / recon_baseline) : 1.0f;
+
+                cout << "Init: aligning to forced poses"
+                     << " actual_baseline=" << actual_baseline
+                     << " recon_baseline=" << recon_baseline
+                     << " scale=" << scale << endl;
+
+                for(auto& p : mvIniP3D)
+                {
+                    Eigen::Vector3f p_init(p.x * scale, p.y * scale, p.z * scale);
+                    Eigen::Vector3f p_world = Twc_init * p_init;
+                    p.x = p_world.x(); p.y = p_world.y(); p.z = p_world.z();
+                }
+
+                mInitialFrame.SetPose(mInitialFrameForcedPose);
+                mCurrentFrame.SetPose(mForcedPose);
+                mbHasForcedPose = false;
+                mbForcedPoseInitialization = true;
+            }
+            else
+            {
+                // Set Frame Poses
+                mInitialFrame.SetPose(Sophus::SE3f());
+                mCurrentFrame.SetPose(Tcw);
+                mbForcedPoseInitialization = false;
+            }
 
             cout << "Monocular Tracking initialized create initial map"
                  << " (triangulated=" << nmatches << " points)" << endl;
@@ -2666,19 +2716,28 @@ void Tracking::CreateInitialMapMonocular()
 
     // Scale initial baseline
     Sophus::SE3f Tc2w = pKFcur->GetPose();
-    Tc2w.translation() *= invMedianDepth;
-    pKFcur->SetPose(Tc2w);
-
-    // Scale points
-    vector<MapPoint*> vpAllMapPoints = pKFini->GetMapPointMatches();
-    for(size_t iMP=0; iMP<vpAllMapPoints.size(); iMP++)
+    if(!mbForcedPoseInitialization)
     {
-        if(vpAllMapPoints[iMP])
+        Tc2w.translation() *= invMedianDepth;
+        pKFcur->SetPose(Tc2w);
+
+        // Scale points
+        vector<MapPoint*> vpAllMapPoints = pKFini->GetMapPointMatches();
+        for(size_t iMP=0; iMP<vpAllMapPoints.size(); iMP++)
         {
-            MapPoint* pMP = vpAllMapPoints[iMP];
-            pMP->SetWorldPos(pMP->GetWorldPos()*invMedianDepth);
-            pMP->UpdateNormalAndDepth();
+            if(vpAllMapPoints[iMP])
+            {
+                MapPoint* pMP = vpAllMapPoints[iMP];
+                pMP->SetWorldPos(pMP->GetWorldPos()*invMedianDepth);
+                pMP->UpdateNormalAndDepth();
+            }
         }
+    }
+    else
+    {
+        cout << "Init: skipping scale normalization (metric world coords from forced poses)" << endl;
+        mbForcedPoseInitialization = false;
+        mbInitialFrameHasForcedPose = false;
     }
 
     if (mSensor == System::IMU_MONOCULAR)
@@ -3285,7 +3344,7 @@ bool Tracking::NeedNewKeyFrame()
         return false;
 }
 
-void Tracking::CreateNewKeyFrame()
+void Tracking::CreateNewKeyFrame(bool bForcedPose)
 {
     if(mpLocalMapper->IsInitializing() && !mpAtlas->isImuInitialized())
         return;
@@ -3294,6 +3353,7 @@ void Tracking::CreateNewKeyFrame()
         return;
 
     KeyFrame* pKF = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
+    pKF->mbForcedPose = bForcedPose;
 
     if(mpAtlas->isImuInitialized()) //  || mpLocalMapper->IsInitializing())
         pKF->bImu = true;
@@ -3580,6 +3640,46 @@ void Tracking::UpdateLocalKeyFrames()
     KeyFrame* pKFmax= static_cast<KeyFrame*>(NULL);
 
     mvpLocalKeyFrames.clear();
+
+    // When the current frame has no map-point matches yet (e.g. first frame after
+    // initialization with an external forced pose), keyframeCounter is empty and
+    // the local map would stay empty — nothing to project in SearchLocalPoints.
+    // Seed from the reference KF and also from the spatially nearest KF (in case
+    // the camera has jumped to a location far from the temporal reference).
+    if(keyframeCounter.empty() && mpReferenceKF && !mpReferenceKF->isBad())
+    {
+        KeyFrame* pSeedKF = mpReferenceKF;
+
+        // Also find the spatially closest KF — it may differ from the temporal reference
+        // after a large camera jump (common with externally provided forced poses).
+        const Eigen::Vector3f camPos = mCurrentFrame.GetPose().inverse().translation();
+        const float refDist = (mpReferenceKF->GetCameraCenter() - camPos).norm();
+        if(refDist > 0.1f) // reference is non-trivially far, search for a closer one
+        {
+            const vector<KeyFrame*> vpAllKFs = mpAtlas->GetCurrentMap()->GetAllKeyFrames();
+            float bestDist = refDist;
+            for(KeyFrame* pKF : vpAllKFs)
+            {
+                if(pKF->isBad()) continue;
+                float d = (pKF->GetCameraCenter() - camPos).norm();
+                if(d < bestDist) { bestDist = d; pSeedKF = pKF; }
+            }
+        }
+
+        // Seed keyframeCounter with reference KF + nearest KF + their covisibility
+        auto seedKF = [&](KeyFrame* pKF) {
+            if(!pKF || pKF->isBad()) return;
+            if(keyframeCounter.find(pKF) == keyframeCounter.end())
+                keyframeCounter[pKF] = 1;
+            for(KeyFrame* pKFcov : pKF->GetBestCovisibilityKeyFrames(10))
+                if(pKFcov && !pKFcov->isBad() && keyframeCounter.find(pKFcov) == keyframeCounter.end())
+                    keyframeCounter[pKFcov] = 1;
+        };
+        seedKF(mpReferenceKF);
+        if(pSeedKF != mpReferenceKF)
+            seedKF(pSeedKF);
+    }
+
     mvpLocalKeyFrames.reserve(3*keyframeCounter.size());
 
     // All keyframes that observe a map point are included in the local map. Also check which keyframe shares most points

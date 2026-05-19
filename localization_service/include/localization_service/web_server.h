@@ -33,7 +33,8 @@ public:
               std::atomic<bool>&  allowMapCreation,
               long unsigned int   initialMapId,
               IngestQueue*        ingestQueue,       // nullptr → /api/frame disabled
-              std::string         staticFileRoot = kStaticFileRoot);
+              std::string         staticFileRoot = kStaticFileRoot,
+              int                 port           = LOCALIZATION_SERVICE_PORT);
 
     ~WebServer();
 
@@ -118,6 +119,7 @@ private:
     long unsigned int   initialMapId_;
     IngestQueue*        ingestQueue_;
     std::string         staticFileRoot_;
+    int                 port_;
     int                 serverFd_{-1};
 };
 
