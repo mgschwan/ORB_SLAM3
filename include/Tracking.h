@@ -192,6 +192,10 @@ public:
     // Thread-safe: called from the ingest path before TrackMonocular.
     void SetNextFramePose(const Sophus::SE3f& Tcw);
 
+    // Monocular initialization path used when both the initial frame and the
+    // current frame carry externally provided poses.  Defined in ForcedPoseInit.cc.
+    void ForcedPoseMonocularInit(int nmatches);
+
     bool         mbHasForcedPose{false};
     Sophus::SE3f mForcedPose;   // Tcw for the next frame
 
