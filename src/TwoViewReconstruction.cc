@@ -64,6 +64,15 @@ namespace ORB_SLAM3
         }
 
         const int N = mvMatches12.size();
+        cout << "[TVR] Reconstruct: keys1=" << vKeys1.size()
+             << " keys2=" << vKeys2.size()
+             << " matches=" << N << endl;
+
+        if(N < 8)
+        {
+            cout << "[TVR] FAIL: fewer than 8 matches, cannot run RANSAC" << endl;
+            return false;
+        }
 
         // Indices for minimum set selection
         vector<size_t> vAllIndices;
@@ -110,20 +119,31 @@ namespace ORB_SLAM3
         threadF.join();
 
         // Compute ratio of scores
-        if(SH+SF == 0.f) return false;
+        if(SH+SF == 0.f)
+        {
+            cout << "[TVR] FAIL: SH+SF=0, both H and F fits are zero — too few or colinear matches" << endl;
+            return false;
+        }
         float RH = SH/(SH+SF);
+
+        int nInliersH = 0, nInliersF = 0;
+        for(bool b : vbMatchesInliersH) if(b) nInliersH++;
+        for(bool b : vbMatchesInliersF) if(b) nInliersF++;
+
+        cout << "[TVR] SH=" << SH << " SF=" << SF << " RH=" << RH
+             << "  inliersH=" << nInliersH << " inliersF=" << nInliersF << endl;
 
         float minParallax = 1.0;
 
         // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
         if(RH>0.50) // if(RH>0.40)
         {
-            //cout << "Initialization from Homography" << endl;
+            cout << "[TVR] -> Homography path (RH=" << RH << " > 0.50)" << endl;
             return ReconstructH(vbMatchesInliersH,H, mK,T21,vP3D,vbTriangulated,minParallax,50);
         }
         else //if(pF_HF>0.6)
         {
-            //cout << "Initialization from Fundamental" << endl;
+            cout << "[TVR] -> Fundamental path (RH=" << RH << " <= 0.50)" << endl;
             return ReconstructF(vbMatchesInliersF,F,mK,T21,vP3D,vbTriangulated,minParallax,50);
         }
     }
@@ -480,6 +500,10 @@ namespace ORB_SLAM3
             if(vbMatchesInliers[i])
                 N++;
 
+        cout << "[TVR-F] ReconstructF: F-inliers=" << N
+             << " minTriangulated=" << minTriangulated
+             << " minParallax=" << minParallax << endl;
+
         // Compute Essential Matrix from Fundamental Matrix
         Eigen::Matrix3f E21 = K.transpose() * F21 * K;
 
@@ -516,9 +540,21 @@ namespace ORB_SLAM3
         if(nGood4>0.7*maxGood)
             nsimilar++;
 
+        cout << "[TVR-F] hypotheses: nGood(R1t1)=" << nGood1 << " par=" << parallax1
+             << "  nGood(R2t1)=" << nGood2 << " par=" << parallax2
+             << "  nGood(R1t2)=" << nGood3 << " par=" << parallax3
+             << "  nGood(R2t2)=" << nGood4 << " par=" << parallax4 << endl;
+        cout << "[TVR-F] maxGood=" << maxGood << " nMinGood=" << nMinGood
+             << " nsimilar=" << nsimilar << endl;
+
         // If there is not a clear winner or not enough triangulated points reject initialization
         if(maxGood<nMinGood || nsimilar>1)
         {
+            if(maxGood<nMinGood)
+                cout << "[TVR-F] FAIL: maxGood=" << maxGood << " < nMinGood=" << nMinGood
+                     << " (need 90% of " << N << " inliers or " << minTriangulated << ")" << endl;
+            if(nsimilar>1)
+                cout << "[TVR-F] FAIL: " << nsimilar << " hypotheses within 70% of best — ambiguous geometry" << endl;
             return false;
         }
 
@@ -531,8 +567,11 @@ namespace ORB_SLAM3
                 vbTriangulated = vbTriangulated1;
 
                 T21 = Sophus::SE3f(R1, t1);
+                cout << "[TVR-F] SUCCESS: R1t1, parallax=" << parallax1 << " good=" << nGood1 << endl;
                 return true;
             }
+            else
+                cout << "[TVR-F] FAIL: best is R1t1 but parallax=" << parallax1 << " < " << minParallax << endl;
         }else if(maxGood==nGood2)
         {
             if(parallax2>minParallax)
@@ -541,8 +580,11 @@ namespace ORB_SLAM3
                 vbTriangulated = vbTriangulated2;
 
                 T21 = Sophus::SE3f(R2, t1);
+                cout << "[TVR-F] SUCCESS: R2t1, parallax=" << parallax2 << " good=" << nGood2 << endl;
                 return true;
             }
+            else
+                cout << "[TVR-F] FAIL: best is R2t1 but parallax=" << parallax2 << " < " << minParallax << endl;
         }else if(maxGood==nGood3)
         {
             if(parallax3>minParallax)
@@ -551,8 +593,11 @@ namespace ORB_SLAM3
                 vbTriangulated = vbTriangulated3;
 
                 T21 = Sophus::SE3f(R1, t2);
+                cout << "[TVR-F] SUCCESS: R1t2, parallax=" << parallax3 << " good=" << nGood3 << endl;
                 return true;
             }
+            else
+                cout << "[TVR-F] FAIL: best is R1t2 but parallax=" << parallax3 << " < " << minParallax << endl;
         }else if(maxGood==nGood4)
         {
             if(parallax4>minParallax)
@@ -561,8 +606,11 @@ namespace ORB_SLAM3
                 vbTriangulated = vbTriangulated4;
 
                 T21 = Sophus::SE3f(R2, t2);
+                cout << "[TVR-F] SUCCESS: R2t2, parallax=" << parallax4 << " good=" << nGood4 << endl;
                 return true;
             }
+            else
+                cout << "[TVR-F] FAIL: best is R2t2 but parallax=" << parallax4 << " < " << minParallax << endl;
         }
 
         return false;
@@ -575,6 +623,10 @@ namespace ORB_SLAM3
         for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
             if(vbMatchesInliers[i])
                 N++;
+
+        cout << "[TVR-H] ReconstructH: H-inliers=" << N
+             << " minTriangulated=" << minTriangulated
+             << " minParallax=" << minParallax << endl;
 
         // We recover 8 motion hypotheses using the method of Faugeras et al.
         // Motion and structure from motion in a piecewise planar environment.
@@ -594,8 +646,13 @@ namespace ORB_SLAM3
         float d2 = w(1);
         float d3 = w(2);
 
+        cout << "[TVR-H] singular values: d1=" << d1 << " d2=" << d2 << " d3=" << d3
+             << "  d1/d2=" << d1/d2 << " d2/d3=" << d2/d3 << endl;
+
         if(d1/d2<1.00001 || d2/d3<1.00001)
         {
+            cout << "[TVR-H] FAIL: degenerate homography — singular values too close"
+                 << " (pure rotation or planar degenerate case)" << endl;
             return false;
         }
 
@@ -706,6 +763,8 @@ namespace ORB_SLAM3
             vector<bool> vbTriangulatedi;
             int nGood = CheckRT(vR[i],vt[i],mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K,vP3Di, 4.0*mSigma2, vbTriangulatedi, parallaxi);
 
+            cout << "[TVR-H]   hyp[" << i << "]: nGood=" << nGood << " parallax=" << parallaxi << endl;
+
             if(nGood>bestGood)
             {
                 secondBestGood = bestGood;
@@ -721,14 +780,29 @@ namespace ORB_SLAM3
             }
         }
 
+        cout << "[TVR-H] bestGood=" << bestGood << " secondBestGood=" << secondBestGood
+             << " bestParallax=" << bestParallax
+             << " nMinGood=" << minTriangulated << " 90%N=" << (int)(0.9*N) << endl;
 
         if(secondBestGood<0.75*bestGood && bestParallax>=minParallax && bestGood>minTriangulated && bestGood>0.9*N)
         {
             T21 = Sophus::SE3f(vR[bestSolutionIdx], vt[bestSolutionIdx]);
             vbTriangulated = bestTriangulated;
 
+            cout << "[TVR-H] SUCCESS: hyp[" << bestSolutionIdx << "] parallax=" << bestParallax
+                 << " good=" << bestGood << endl;
             return true;
         }
+
+        if(secondBestGood >= 0.75*bestGood)
+            cout << "[TVR-H] FAIL: ambiguous — secondBestGood=" << secondBestGood
+                 << " >= 75% of bestGood=" << bestGood << endl;
+        if(bestParallax < minParallax)
+            cout << "[TVR-H] FAIL: bestParallax=" << bestParallax << " < minParallax=" << minParallax << endl;
+        if(bestGood <= minTriangulated)
+            cout << "[TVR-H] FAIL: bestGood=" << bestGood << " <= minTriangulated=" << minTriangulated << endl;
+        if(bestGood <= 0.9*N)
+            cout << "[TVR-H] FAIL: bestGood=" << bestGood << " <= 90% of N=" << N << endl;
 
         return false;
     }
@@ -816,11 +890,15 @@ namespace ORB_SLAM3
         Eigen::Vector3f O2 = -R.transpose() * t;
 
         int nGood=0;
+        int nSkipOutlier=0, nNonFinite=0, nBehindCam1=0, nBehindCam2=0, nReproj1=0, nReproj2=0;
 
         for(size_t i=0, iend=vMatches12.size();i<iend;i++)
         {
             if(!vbMatchesInliers[i])
+            {
+                nSkipOutlier++;
                 continue;
+            }
 
             const cv::KeyPoint &kp1 = vKeys1[vMatches12[i].first];
             const cv::KeyPoint &kp2 = vKeys2[vMatches12[i].second];
@@ -835,6 +913,7 @@ namespace ORB_SLAM3
             if(!isfinite(p3dC1(0)) || !isfinite(p3dC1(1)) || !isfinite(p3dC1(2)))
             {
                 vbGood[vMatches12[i].first]=false;
+                nNonFinite++;
                 continue;
             }
 
@@ -849,13 +928,19 @@ namespace ORB_SLAM3
 
             // Check depth in front of first camera (only if enough parallax, as "infinite" points can easily go to negative depth)
             if(p3dC1(2)<=0 && cosParallax<0.99998)
+            {
+                nBehindCam1++;
                 continue;
+            }
 
             // Check depth in front of second camera (only if enough parallax, as "infinite" points can easily go to negative depth)
             Eigen::Vector3f p3dC2 = R * p3dC1 + t;
 
             if(p3dC2(2)<=0 && cosParallax<0.99998)
+            {
+                nBehindCam2++;
                 continue;
+            }
 
             // Check reprojection error in first image
             float im1x, im1y;
@@ -866,7 +951,10 @@ namespace ORB_SLAM3
             float squareError1 = (im1x-kp1.pt.x)*(im1x-kp1.pt.x)+(im1y-kp1.pt.y)*(im1y-kp1.pt.y);
 
             if(squareError1>th2)
+            {
+                nReproj1++;
                 continue;
+            }
 
             // Check reprojection error in second image
             float im2x, im2y;
@@ -877,7 +965,10 @@ namespace ORB_SLAM3
             float squareError2 = (im2x-kp2.pt.x)*(im2x-kp2.pt.x)+(im2y-kp2.pt.y)*(im2y-kp2.pt.y);
 
             if(squareError2>th2)
+            {
+                nReproj2++;
                 continue;
+            }
 
             vCosParallax.push_back(cosParallax);
             vP3D[vMatches12[i].first] = cv::Point3f(p3dC1(0), p3dC1(1), p3dC1(2));
@@ -886,6 +977,14 @@ namespace ORB_SLAM3
             if(cosParallax<0.99998)
                 vbGood[vMatches12[i].first]=true;
         }
+
+        cout << "[TVR-RT] CheckRT: good=" << nGood
+             << " | rejected: F-outlier=" << nSkipOutlier
+             << " nonfinite=" << nNonFinite
+             << " behindCam1=" << nBehindCam1
+             << " behindCam2=" << nBehindCam2
+             << " reproj1=" << nReproj1
+             << " reproj2=" << nReproj2 << endl;
 
         if(nGood>0)
         {

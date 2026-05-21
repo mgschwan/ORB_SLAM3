@@ -157,6 +157,7 @@ public:
     Frame mLastFrame;
 
     cv::Mat mImGray;
+    cv::Mat mInitImGray;   // grayscale image of the monocular initialization frame (debug)
 
     // Initialization Variables (Monocular)
     std::vector<int> mvIniLastMatches;

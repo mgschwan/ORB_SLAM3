@@ -642,13 +642,30 @@ std::string WebServer::handleFramePost(int fd, const std::string& rawRequest,
     // which is ORB-SLAM3's internal convention.
     const std::string txStr = queryParam(rawRequest, "tx");
     if (!txStr.empty()) {
-        Eigen::Vector3f    t(queryFloat(rawRequest, "tx"),
-                             queryFloat(rawRequest, "ty"),
-                             queryFloat(rawRequest, "tz"));
-        Eigen::Quaternionf q(queryFloat(rawRequest, "qw"),   // Eigen: w,x,y,z
-                             queryFloat(rawRequest, "qx"),
-                             queryFloat(rawRequest, "qy"),
-                             queryFloat(rawRequest, "qz"));
+        // Unity uses a left-handed Y-up world frame; ORB-SLAM3 uses a right-handed
+        // Y-down world frame.  Both Unity's camera and ORB-SLAM3's camera have
+        // their X-axis pointing right and Z-axis pointing forward; only Y differs
+        // (Y-up in Unity, Y-down in ORBSLAM).
+        //
+        // To convert a rotation R_unity that maps Unity-camera-frame (Y-up) to
+        // Unity-world-frame (Y-up) into R_orbslam that maps ORBSLAM-camera-frame
+        // (Y-down) to ORBSLAM-world-frame (Y-down), apply a Y-axis reflection M:
+        //   R_orbslam = M * R_unity * M    where M = diag(1, -1, 1)
+        //
+        // In quaternion form, M*R*M corresponds to negating the X and Z components
+        // while keeping W and Y.  Negating only Y (the previous code) is incorrect —
+        // it corresponds to a different transformation and causes scene points to
+        // appear behind the camera in ORB-SLAM3's frame.
+        //
+        // Translation: negate Y (camera world-position Y-axis is flipped).
+        // Rotation: negate qx and qz (implements M*R_unity*M in quaternion form).
+        Eigen::Vector3f    t( queryFloat(rawRequest, "tx"),
+                             -queryFloat(rawRequest, "ty"),   // Y-up → Y-down
+                              queryFloat(rawRequest, "tz"));
+        Eigen::Quaternionf q( queryFloat(rawRequest, "qw"),   // Eigen: w,x,y,z
+                             -queryFloat(rawRequest, "qx"),   // M*R*M: negate qx
+                              queryFloat(rawRequest, "qy"),
+                             -queryFloat(rawRequest, "qz")); // M*R*M: negate qz
         q.normalize();
         Sophus::SE3f Twc(q.toRotationMatrix(), t);
         frame.hasPose = true;

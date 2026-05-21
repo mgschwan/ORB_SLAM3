@@ -2530,6 +2530,7 @@ void Tracking::MonocularInitialization()
             }
 
             mbReadyToInitializate = true;
+            mInitImGray = mImGray.clone();   // save for match visualization
 
             cout << "Monocular Tracking ready to initialize" << endl;
 
@@ -2553,11 +2554,19 @@ void Tracking::MonocularInitialization()
         ORBmatcher matcher(0.9,true);
         int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
+        int correspondeceCountThreshold = 100;
+        if ( mbInitialFrameHasForcedPose && mbHasForcedPose )
+        {
+            // With two externally provided poses, we can be more lenient on the number of matches.
+            // The pose is trusted regardless of the number of matches, so no need to enforce a high minimum.
+            correspondeceCountThreshold = 10;
+        }
+
         // Check if there are enough correspondences
-        if(nmatches<100)
+        if(nmatches<correspondeceCountThreshold)
         {
             cout << "Monocular Tracking tried to initialize but not enough matches"
-                 << " (found=" << nmatches << "/100 required"
+                 << " (found=" << nmatches << "/" << correspondeceCountThreshold << " required"
                  << ", initKPs=" << mInitialFrame.mvKeysUn.size()
                  << ", curKPs=" << mCurrentFrame.mvKeysUn.size()
                  << ", initForcedPose=" << (mbInitialFrameHasForcedPose ? "yes" : "no")
@@ -2567,7 +2576,6 @@ void Tracking::MonocularInitialization()
             return;
         }
 
-        Sophus::SE3f Tcw;
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
         cout << "Monocular Tracking attempting reconstruction"
@@ -2578,6 +2586,232 @@ void Tracking::MonocularInitialization()
              << ", curForcedPose=" << (mbHasForcedPose ? "yes" : "no")
              << ")" << endl;
 
+        // When both frames carry known external poses, bypass TwoViewReconstruction
+        // entirely and triangulate directly with the known relative pose.
+        // TwoViewReconstruction's H/F estimator fails on small-baseline sequences
+        // because it requires 90% of inliers to triangulate well — with a tiny
+        // baseline the estimated T21 is noisy and most triangulated points have
+        // large reprojection errors.  With the correct T21 the reprojection errors
+        // are near zero regardless of baseline length.
+        if(mbInitialFrameHasForcedPose && mbHasForcedPose)
+        {
+            Sophus::SE3f T21 = mForcedPose * mInitialFrameForcedPose.inverse();
+            Eigen::Matrix3f R = T21.rotationMatrix();
+            Eigen::Vector3f t = T21.translation();
+
+            // ---- Diagnostic: print T21 so we can verify the coordinate conversion ----
+            {
+                Eigen::AngleAxisf aa(R);
+                Eigen::Vector3f twc_init = mInitialFrameForcedPose.inverse().translation();
+                Eigen::Vector3f twc_cur  = mForcedPose.inverse().translation();
+                cout << "[Init-ForcedPose] init cam pos (Twc.t): " << twc_init.transpose() << endl;
+                cout << "[Init-ForcedPose] cur  cam pos (Twc.t): " << twc_cur.transpose() << endl;
+                cout << "[Init-ForcedPose] T21 translation: " << t.transpose()
+                     << "  |t|=" << t.norm() << endl;
+                cout << "[Init-ForcedPose] T21 rotation: axis=" << aa.axis().transpose()
+                     << " angle=" << aa.angle() * 180.0f / float(M_PI) << " deg" << endl;
+            }
+
+            // ---- Baseline gate ------------------------------------------------
+            // Small baselines produce very noisy depth estimates regardless of
+            // how well the matches and filtering work.  Wait until the camera has
+            // moved far enough from the initial frame.
+            const float minBaseline = 0.15f;  // metres
+            if(t.norm() < minBaseline)
+            {
+                cout << "[Init-ForcedPose] baseline=" << t.norm()
+                     << "m < " << minBaseline << "m threshold, waiting for larger baseline" << endl;
+                return;
+            }
+
+            // Build projection matrices (undistorted, normalised coords already used
+            // by mvKeysUn so we can use K directly).
+            const float fx = Frame::fx, fy = Frame::fy;
+            const float cx = Frame::cx, cy = Frame::cy;
+            Eigen::Matrix3f K;
+            K << fx, 0, cx,
+                  0, fy, cy,
+                  0,  0,  1;
+
+            Eigen::Matrix<float,3,4> P1;
+            P1.setZero();
+            P1.block<3,3>(0,0) = K;
+
+            Eigen::Matrix<float,3,4> P2;
+            P2.block<3,3>(0,0) = R;
+            P2.block<3,1>(0,3) = t;
+            P2 = K * P2;
+
+            // ---- Epipolar filter using the known T21 -------------------------
+            // Compute F = K^{-T} * [t]_x * R * K^{-1} from the known essential
+            // matrix.  A correct match must satisfy |x2^T F x1| < threshold.
+            // This rejects outlier matches without requiring RANSAC since T21 is
+            // already known from the external pose.
+            Eigen::Matrix3f tx;  // skew-symmetric [t]_x
+            tx <<      0, -t(2),  t(1),
+                   t(2),      0, -t(0),
+                  -t(1),  t(0),      0;
+            Eigen::Matrix3f E21 = tx * R;
+            Eigen::Matrix3f Kinv = K.inverse();
+            Eigen::Matrix3f F21 = Kinv.transpose() * E21 * Kinv;  // pixel-space F
+
+            const float epipolar_th = 2.5f;  // pixels; Sampson distance threshold
+
+            const float reproj_th2   = 4.0f;    // 2-pixel threshold (pixels^2)
+            const float minCosParallax = 0.9998f; // ~1.1° — rejects low-parallax uncertain depths
+            const float minDepth = 0.05f;         // metres — below this is a triangulation artefact
+            const float maxDepth = 50.0f;         // metres — beyond this is not useful for a room
+
+            Eigen::Vector3f O1(0.0f, 0.0f, 0.0f);          // cam1 optical centre in cam1 frame
+            Eigen::Vector3f O2 = -(R.transpose() * t);      // cam2 optical centre in cam1 frame
+
+            mvIniP3D.resize(mInitialFrame.mvKeysUn.size());
+            vbTriangulated.resize(mInitialFrame.mvKeysUn.size(), false);
+            int nGood = 0;
+            int nBehind = 0, nNonFinite = 0, nReproj = 0, nLowParallax = 0,
+                nEpipolar = 0, nDepthRange = 0;
+
+            for(size_t i = 0; i < mvIniMatches.size(); i++)
+            {
+                if(mvIniMatches[i] < 0) continue;
+
+                const cv::KeyPoint& kp1 = mInitialFrame.mvKeysUn[i];
+                const cv::KeyPoint& kp2 = mCurrentFrame.mvKeysUn[mvIniMatches[i]];
+
+                // ---- Epipolar check: fast outlier rejection before triangulation ----
+                // Sampson distance: numerically more robust than point-to-line distance.
+                Eigen::Vector3f x1(kp1.pt.x, kp1.pt.y, 1.0f);
+                Eigen::Vector3f x2(kp2.pt.x, kp2.pt.y, 1.0f);
+                {
+                    Eigen::Vector3f Fx1 = F21 * x1;
+                    Eigen::Vector3f Ftx2 = F21.transpose() * x2;
+                    float x2tFx1 = x2.dot(Fx1);
+                    float sampson = x2tFx1 * x2tFx1 /
+                                   (Fx1(0)*Fx1(0) + Fx1(1)*Fx1(1) +
+                                    Ftx2(0)*Ftx2(0) + Ftx2(1)*Ftx2(1));
+                    if(std::abs(sampson) > epipolar_th) { nEpipolar++; continue; }
+                }
+
+                Eigen::Vector3f p3dC1;
+                GeometricTools::Triangulate(x1, x2, P1, P2, p3dC1);
+
+                if(!isfinite(p3dC1(0)) || !isfinite(p3dC1(1)) || !isfinite(p3dC1(2)))
+                    { nNonFinite++; continue; }
+                if(p3dC1(2) <= 0.0f)
+                    { nBehind++; continue; }
+
+                Eigen::Vector3f p3dC2 = R * p3dC1 + t;
+                if(p3dC2(2) <= 0.0f)
+                    { nBehind++; continue; }
+
+                // Reject points with insufficient parallax: their depth is uncertain
+                // and they scatter to very large depths, polluting the initial map.
+                Eigen::Vector3f n1 = p3dC1 - O1;
+                Eigen::Vector3f n2 = p3dC1 - O2;
+                float cosParallax = n1.dot(n2) / (n1.norm() * n2.norm());
+                if(cosParallax >= minCosParallax)
+                    { nLowParallax++; continue; }
+
+                // Depth range: reject artefacts closer than minDepth or further than maxDepth
+                if(p3dC1(2) < minDepth || p3dC1(2) > maxDepth)
+                    { nDepthRange++; continue; }
+
+                float invZ1 = 1.0f / p3dC1(2);
+                float u1 = fx * p3dC1(0) * invZ1 + cx;
+                float v1 = fy * p3dC1(1) * invZ1 + cy;
+                float err1 = (u1 - kp1.pt.x)*(u1 - kp1.pt.x) + (v1 - kp1.pt.y)*(v1 - kp1.pt.y);
+                if(err1 > reproj_th2) { nReproj++; continue; }
+
+                float invZ2 = 1.0f / p3dC2(2);
+                float u2 = fx * p3dC2(0) * invZ2 + cx;
+                float v2 = fy * p3dC2(1) * invZ2 + cy;
+                float err2 = (u2 - kp2.pt.x)*(u2 - kp2.pt.x) + (v2 - kp2.pt.y)*(v2 - kp2.pt.y);
+                if(err2 > reproj_th2) { nReproj++; continue; }
+
+                mvIniP3D[i] = cv::Point3f(p3dC1(0), p3dC1(1), p3dC1(2));
+                vbTriangulated[i] = true;
+                nGood++;
+            }
+
+            cout << "[Init-ForcedPose] matches=" << nmatches
+                 << " triangulated=" << nGood
+                 << " | rejected: epipolar=" << nEpipolar
+                 << " behind=" << nBehind
+                 << " nonfinite=" << nNonFinite
+                 << " depthRange=" << nDepthRange
+                 << " lowParallax=" << nLowParallax
+                 << " reproj=" << nReproj
+                 << " baseline=" << t.norm() << "m" << endl;
+
+            // ---- Save match visualization -----------------------------------------
+            // Saves /tmp/orbslam_init_matches.png every attempt so you can inspect
+            // which features matched between the two frames.
+            if(!mInitImGray.empty() && !mImGray.empty())
+            {
+                cv::Mat canvas;
+                cv::hconcat(mInitImGray, mImGray, canvas);
+                if(canvas.channels() == 1)
+                    cv::cvtColor(canvas, canvas, cv::COLOR_GRAY2BGR);
+
+                int offset = mInitImGray.cols;
+                for(size_t i = 0; i < mvIniMatches.size(); i++)
+                {
+                    if(mvIniMatches[i] < 0) continue;
+                    const cv::KeyPoint& kp1 = mInitialFrame.mvKeysUn[i];
+                    const cv::KeyPoint& kp2 = mCurrentFrame.mvKeysUn[mvIniMatches[i]];
+                    cv::Point2f p1(kp1.pt.x, kp1.pt.y);
+                    cv::Point2f p2(kp2.pt.x + offset, kp2.pt.y);
+                    bool good = vbTriangulated[i];
+                    cv::Scalar color = good ? cv::Scalar(0,255,0) : cv::Scalar(0,0,255);
+                    cv::circle(canvas, p1, 3, color, -1);
+                    cv::circle(canvas, p2, 3, color, -1);
+                    cv::line(canvas, p1, p2, good ? cv::Scalar(0,200,0) : cv::Scalar(0,0,180), 1);
+                }
+                cv::imwrite("/tmp/orbslam_init_matches.png", canvas);
+                cout << "[Init-ForcedPose] debug image saved: /tmp/orbslam_init_matches.png"
+                     << " (green=good triangulation, red=failed)" << endl;
+            }
+
+            if(nGood < 30)
+            {
+                cout << "[Init-ForcedPose] not enough good points (" << nGood << " < 30), waiting" << endl;
+                return;
+            }
+
+            // Strip matches where triangulation failed
+            nmatches = 0;
+            for(size_t i = 0; i < mvIniMatches.size(); i++)
+            {
+                if(mvIniMatches[i] >= 0 && !vbTriangulated[i])
+                    mvIniMatches[i] = -1;
+                else if(mvIniMatches[i] >= 0)
+                    nmatches++;
+            }
+
+            // Transform points from initial-frame camera coords to world coords
+            Sophus::SE3f Twc_init = mInitialFrameForcedPose.inverse();
+            for(size_t i = 0; i < mvIniP3D.size(); i++)
+            {
+                if(!vbTriangulated[i]) continue;
+                Eigen::Vector3f p_cam(mvIniP3D[i].x, mvIniP3D[i].y, mvIniP3D[i].z);
+                Eigen::Vector3f p_world = Twc_init * p_cam;
+                mvIniP3D[i] = cv::Point3f(p_world.x(), p_world.y(), p_world.z());
+            }
+
+            mInitialFrame.SetPose(mInitialFrameForcedPose);
+            mCurrentFrame.SetPose(mForcedPose);
+            mbHasForcedPose = false;
+            mbForcedPoseInitialization = true;
+
+            cout << "Monocular Tracking initialized (forced-pose path)"
+                 << " (triangulated=" << nmatches << " points)" << endl;
+
+            CreateInitialMapMonocular();
+            return;
+        }
+
+        // Standard path: estimate T21 from feature matches via H/F decomposition
+        Sophus::SE3f Tcw;
         if(mpCamera->ReconstructWithTwoViews(mInitialFrame.mvKeysUn,mCurrentFrame.mvKeysUn,mvIniMatches,Tcw,mvIniP3D,vbTriangulated))
         {
             for(size_t i=0, iend=mvIniMatches.size(); i<iend;i++)
@@ -2589,42 +2823,10 @@ void Tracking::MonocularInitialization()
                 }
             }
 
-            // If both frames carry external metric poses, transform the
-            // reconstructed points into world coordinates so that subsequent
-            // forced-pose frames can match them.  Otherwise fall back to the
-            // standard "initial frame = origin" convention.
-            if(mbInitialFrameHasForcedPose && mbHasForcedPose)
-            {
-                Sophus::SE3f Twc_init = mInitialFrameForcedPose.inverse();
-                Sophus::SE3f Twc_cur  = mForcedPose.inverse();
-                float actual_baseline = (Twc_cur.translation() - Twc_init.translation()).norm();
-                float recon_baseline  = Tcw.translation().norm();
-                float scale = (recon_baseline > 1e-6f) ? (actual_baseline / recon_baseline) : 1.0f;
-
-                cout << "Init: aligning to forced poses"
-                     << " actual_baseline=" << actual_baseline
-                     << " recon_baseline=" << recon_baseline
-                     << " scale=" << scale << endl;
-
-                for(auto& p : mvIniP3D)
-                {
-                    Eigen::Vector3f p_init(p.x * scale, p.y * scale, p.z * scale);
-                    Eigen::Vector3f p_world = Twc_init * p_init;
-                    p.x = p_world.x(); p.y = p_world.y(); p.z = p_world.z();
-                }
-
-                mInitialFrame.SetPose(mInitialFrameForcedPose);
-                mCurrentFrame.SetPose(mForcedPose);
-                mbHasForcedPose = false;
-                mbForcedPoseInitialization = true;
-            }
-            else
-            {
-                // Set Frame Poses
-                mInitialFrame.SetPose(Sophus::SE3f());
-                mCurrentFrame.SetPose(Tcw);
-                mbForcedPoseInitialization = false;
-            }
+            // Set Frame Poses
+            mInitialFrame.SetPose(Sophus::SE3f());
+            mCurrentFrame.SetPose(Tcw);
+            mbForcedPoseInitialization = false;
 
             cout << "Monocular Tracking initialized create initial map"
                  << " (triangulated=" << nmatches << " points)" << endl;
@@ -2694,7 +2896,19 @@ void Tracking::CreateInitialMapMonocular()
 
     // Bundle Adjustment
     Verbose::PrintMess("New Map created with " + to_string(mpAtlas->MapPointsInMap()) + " points", Verbose::VERBOSITY_QUIET);
-    Optimizer::GlobalBundleAdjustemnt(mpAtlas->GetCurrentMap(),20);
+
+    if(mbForcedPoseInitialization)
+    {
+        // Skip BA: forced poses are already metric and define the world reference.
+        // Running BA would move pKFcur away from its forced pose, shifting the world
+        // frame and making all subsequent forced poses misaligned with the map.
+        // LocalMapping's incremental BA will refine map points as more keyframes arrive.
+        cout << "BA: Skipping GlobalBA for forced-pose initialization (world frame must stay fixed)" << endl;
+    }
+    else
+    {
+        Optimizer::GlobalBundleAdjustemnt(mpAtlas->GetCurrentMap(),20);
+    }
 
     float medianDepth = pKFini->ComputeSceneMedianDepth(2);
     float invMedianDepth;
