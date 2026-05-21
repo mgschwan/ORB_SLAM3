@@ -229,6 +229,7 @@ def main() -> None:
                     "qy": pose["qy"],
                     "qz": pose["qz"],
                     "qw": pose["qw"],
+                    "coordsys": "unity"
                 })
 
             data = send_with_retry(session, frame_url, jpeg_bytes, params)
