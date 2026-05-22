@@ -93,6 +93,7 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     SetPose(F.GetPose());
 
     mnOriginMapId = pMap->GetId();
+    mImColor = F.mImColor;
 }
 
 void KeyFrame::ComputeBoW()

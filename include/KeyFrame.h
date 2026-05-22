@@ -415,6 +415,9 @@ public:
 
     unsigned int mnOriginMapId;
 
+    // Original color image (BGR) copied from the source Frame at KeyFrame creation.
+    cv::Mat mImColor;
+
     string mNameFile;
 
     int mnDataset;

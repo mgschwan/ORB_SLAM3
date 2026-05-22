@@ -90,6 +90,7 @@ Frame::Frame(const Frame &frame)
 
     mmProjectPoints = frame.mmProjectPoints;
     mmMatchedInImage = frame.mmMatchedInImage;
+    mImColor = frame.mImColor;
 
 #ifdef REGISTER_TIMES
     mTimeStereoMatch = frame.mTimeStereoMatch;

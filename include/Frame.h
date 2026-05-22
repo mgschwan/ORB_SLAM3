@@ -354,6 +354,10 @@ public:
 
     cv::Mat imgLeft, imgRight;
 
+    // Original color image (BGR) captured before grayscale conversion.
+    // Empty when the input was already grayscale.
+    cv::Mat mImColor;
+
     void PrintPointDistribution(){
         int left = 0, right = 0;
         int Nlim = (Nleft != -1) ? Nleft : N;

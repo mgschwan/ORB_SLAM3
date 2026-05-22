@@ -49,6 +49,9 @@ Waiting for data...
             <input type="range" id="movement-scale" min="1" max="100" value="10" oninput="updateScale(this.value)">
         </div>
 
+        <div class="control-group" style="margin-top: 10px;">
+            <label><input type="checkbox" id="chk-color" checked> Use point colors</label>
+        </div>
         <button id="btn-camera-mode" onclick="toggleCameraMode()">Switch to First-Person</button>
         <button id="btn-load-map" onclick="loadMap()">Visualize Map</button>
         <button onclick="resetCamera()">Reset View</button>
@@ -107,17 +110,28 @@ Waiting for data...
 
                     const geometry = new THREE.BufferGeometry();
                     const vertices = [];
+                    const colors   = [];
+                    const useColor = document.getElementById('chk-color').checked;
 
                     data.forEach(p => {
-                        // Apply same scale logic as camera
                         vertices.push(p.x * movementScale, -p.y * movementScale, -p.z * movementScale);
+                        if (useColor) {
+                            // r/g/b are 0-255; Three.js expects 0-1
+                            colors.push((p.r || 0) / 255, (p.g || 0) / 255, (p.b || 0) / 255);
+                        }
                     });
 
                     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-                    const material = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05 });
-                    const points = new THREE.Points(geometry, material);
 
-                    pointsGroup.add(points);
+                    let material;
+                    if (useColor) {
+                        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                        material = new THREE.PointsMaterial({ vertexColors: true, size: 0.05 });
+                    } else {
+                        material = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05 });
+                    }
+
+                    pointsGroup.add(new THREE.Points(geometry, material));
                     mapGroup.add(pointsGroup);
                 })
                 .catch(err => console.error("Error loading map:", err));

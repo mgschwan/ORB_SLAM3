@@ -40,6 +40,17 @@ using namespace std;
 namespace ORB_SLAM3
 {
 
+// Sample a BGR color from img at the given pixel position, clamped to bounds.
+static cv::Vec3b sampleBGR(const cv::Mat& img, const cv::Point2f& pt)
+{
+    if (img.empty()) return {0, 0, 0};
+    int x = std::max(0, std::min((int)pt.x, img.cols - 1));
+    int y = std::max(0, std::min((int)pt.y, img.rows - 1));
+    if (img.channels() == 3) return img.at<cv::Vec3b>(y, x);
+    if (img.channels() == 4) { auto v = img.at<cv::Vec4b>(y, x); return {v[0], v[1], v[2]}; }
+    uchar g = img.at<uchar>(y, x); return {g, g, g};
+}
+
 
 Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, Settings* settings, const string &_nameSeq):
     mState(NO_IMAGES_YET), mSensor(sensor), mTrackedFr(0), mbStep(false),
@@ -1501,6 +1512,9 @@ Sophus::SE3f Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat 
 
     //cout << "Incoming frame ended" << endl;
 
+    if(imRectLeft.channels() >= 3)
+        mCurrentFrame.mImColor = imRectLeft.clone();
+
     mCurrentFrame.mNameFile = filename;
     mCurrentFrame.mnDataset = mnNumDataset;
 
@@ -1545,8 +1559,8 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
     else if(mSensor == System::IMU_RGBD)
         mCurrentFrame = Frame(mImGray,imDepth,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib);
 
-
-
+    if(imRGB.channels() >= 3)
+        mCurrentFrame.mImColor = imRGB.clone();
 
 
 
@@ -1597,6 +1611,9 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
         else
             mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth,&mLastFrame,*mpImuCalib);
     }
+
+    if(im.channels() >= 3)
+        mCurrentFrame.mImColor = im.clone();
 
     if (mState==NO_IMAGES_YET)
         t0=timestamp;
@@ -2652,6 +2669,7 @@ void Tracking::CreateInitialMapMonocular()
         Eigen::Vector3f worldPos;
         worldPos << mvIniP3D[i].x, mvIniP3D[i].y, mvIniP3D[i].z;
         MapPoint* pMP = new MapPoint(worldPos,pKFcur,mpAtlas->GetCurrentMap());
+        pMP->mRgb = sampleBGR(mCurrentFrame.mImColor, mCurrentFrame.mvKeysUn[mvIniMatches[i]].pt);
 
         pKFini->AddMapPoint(pMP,i);
         pKFcur->AddMapPoint(pMP,mvIniMatches[i]);
@@ -3429,6 +3447,7 @@ void Tracking::CreateNewKeyFrame(bool bForcedPose)
                     }
 
                     MapPoint* pNewMP = new MapPoint(x3D,pKF,mpAtlas->GetCurrentMap());
+                    pNewMP->mRgb = sampleBGR(mCurrentFrame.mImColor, mCurrentFrame.mvKeysUn[i].pt);
                     pNewMP->AddObservation(pKF,i);
 
                     //Check if it is a stereo observation in order to not

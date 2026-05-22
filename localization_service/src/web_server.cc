@@ -304,9 +304,14 @@ bool WebServer::routeMap(const std::string& req, std::string& response)
                 if (!pMP || pMP->isBad()) continue;
                 if (!first) json += ",";
                 Eigen::Vector3f p = pMP->GetWorldPos();
+                // mRgb is BGR (OpenCV); expose as r/g/b
+                const cv::Vec3b& bgr = pMP->mRgb;
                 json += "{\"x\":" + std::to_string(p.x())
                       + ",\"y\":" + std::to_string(p.y())
-                      + ",\"z\":" + std::to_string(p.z()) + "}";
+                      + ",\"z\":" + std::to_string(p.z())
+                      + ",\"r\":" + std::to_string((int)bgr[2])
+                      + ",\"g\":" + std::to_string((int)bgr[1])
+                      + ",\"b\":" + std::to_string((int)bgr[0]) + "}";
                 first = false;
             }
         }
