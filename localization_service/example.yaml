@@ -33,8 +33,10 @@ Camera1.k3: 0.0
 Camera1.k4: 0.0
     
 # Camera resolution
-Camera.width: 1280
-Camera.height: 1280
+#Camera.width: 1280
+#Camera.height: 1280
+Camera.width: 640
+Camera.height: 480
 
 # Camera frames per second 
 Camera.fps: 20

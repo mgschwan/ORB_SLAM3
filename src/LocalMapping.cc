@@ -18,6 +18,7 @@
 
 
 #include "LocalMapping.h"
+#include "ColorUtils.h"
 #include "LoopClosing.h"
 #include "ORBmatcher.h"
 #include "Optimizer.h"
@@ -30,15 +31,6 @@
 namespace ORB_SLAM3
 {
 
-static cv::Vec3b sampleBGR(const cv::Mat& img, const cv::Point2f& pt)
-{
-    if (img.empty()) return {0, 0, 0};
-    int x = std::max(0, std::min((int)pt.x, img.cols - 1));
-    int y = std::max(0, std::min((int)pt.y, img.rows - 1));
-    if (img.channels() == 3) return img.at<cv::Vec3b>(y, x);
-    if (img.channels() == 4) { auto v = img.at<cv::Vec4b>(y, x); return {v[0], v[1], v[2]}; }
-    uchar g = img.at<uchar>(y, x); return {g, g, g};
-}
 
 LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, bool bInertial, const string &_strSeqName):
     mpSystem(pSys), mbMonocular(bMonocular), mbInertial(bInertial), mbResetRequested(false), mbResetRequestedActiveMap(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas), bInitializing(false),
@@ -163,6 +155,14 @@ void LocalMapping::Run()
                     {
                         Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA);
                         b_doneLBA = true;
+                        cout << "[LBA] KF=" << mpCurrentKeyFrame->mnId
+                             << " aborted=" << mbAbortBA
+                             << " fixedKF=" << num_FixedKF_BA
+                             << " optKF=" << num_OptKF_BA
+                             << " MPs=" << num_MPs_BA
+                             << " edges=" << num_edges_BA
+                             << " totalKFs=" << mpAtlas->KeyFramesInMap()
+                             << " totalMPs=" << mpAtlas->MapPointsInMap() << endl;
                     }
 
                 }
@@ -715,7 +715,7 @@ void LocalMapping::CreateNewMapPoints()
 
             // Triangulation is succesfull
             MapPoint* pMP = new MapPoint(x3D, mpCurrentKeyFrame, mpAtlas->GetCurrentMap());
-            pMP->mRgb = sampleBGR(mpCurrentKeyFrame->mImColor, kp1.pt);
+            pMP->mRgb = sampleBGR5x5(mpCurrentKeyFrame->mImColor, kp1.pt);
             if (bPointStereo)
                 countStereo++;
             

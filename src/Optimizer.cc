@@ -1177,7 +1177,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         }
     }
     num_fixedKF = lFixedCameras.size() + num_fixedKF;
-
+    num_MPs = lLocalMapPoints.size();
 
     if(num_fixedKF == 0)
     {

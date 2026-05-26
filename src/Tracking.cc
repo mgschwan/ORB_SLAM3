@@ -18,6 +18,7 @@
 
 
 #include "Tracking.h"
+#include "ColorUtils.h"
 
 #include "ORBmatcher.h"
 #include "FrameDrawer.h"
@@ -40,16 +41,6 @@ using namespace std;
 namespace ORB_SLAM3
 {
 
-// Sample a BGR color from img at the given pixel position, clamped to bounds.
-static cv::Vec3b sampleBGR(const cv::Mat& img, const cv::Point2f& pt)
-{
-    if (img.empty()) return {0, 0, 0};
-    int x = std::max(0, std::min((int)pt.x, img.cols - 1));
-    int y = std::max(0, std::min((int)pt.y, img.rows - 1));
-    if (img.channels() == 3) return img.at<cv::Vec3b>(y, x);
-    if (img.channels() == 4) { auto v = img.at<cv::Vec4b>(y, x); return {v[0], v[1], v[2]}; }
-    uchar g = img.at<uchar>(y, x); return {g, g, g};
-}
 
 
 Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, Settings* settings, const string &_nameSeq):
@@ -2669,7 +2660,7 @@ void Tracking::CreateInitialMapMonocular()
         Eigen::Vector3f worldPos;
         worldPos << mvIniP3D[i].x, mvIniP3D[i].y, mvIniP3D[i].z;
         MapPoint* pMP = new MapPoint(worldPos,pKFcur,mpAtlas->GetCurrentMap());
-        pMP->mRgb = sampleBGR(mCurrentFrame.mImColor, mCurrentFrame.mvKeysUn[mvIniMatches[i]].pt);
+        pMP->mRgb = sampleBGR5x5(mCurrentFrame.mImColor, mCurrentFrame.mvKeysUn[mvIniMatches[i]].pt);
 
         pKFini->AddMapPoint(pMP,i);
         pKFcur->AddMapPoint(pMP,mvIniMatches[i]);
@@ -2701,10 +2692,18 @@ void Tracking::CreateInitialMapMonocular()
 
     if(mbForcedPoseInitialization)
     {
-        // Skip BA: forced poses are already metric and define the world reference.
+        // Both init KFs carry externally-trusted metric poses.  Mark them as forced
+        // so LocalBundleAdjustment fixes them in place — only map-point positions
+        // will be free to optimise.  Without this, pKFcur (not the InitKF anchor)
+        // drifts in LBA, shifting the world frame away from the forced-pose system.
+        pKFini->mbForcedPose = true;
+        pKFcur->mbForcedPose = true;
+
+        // Skip GlobalBA: forced poses define the metric world reference.
         // Running BA would move pKFcur away from its forced pose, shifting the world
         // frame and making all subsequent forced poses misaligned with the map.
-        // LocalMapping's incremental BA will refine map points as more keyframes arrive.
+        // LocalMapping's incremental LBA will refine map-point positions with the
+        // init KFs fixed at their forced positions.
         cout << "BA: Skipping GlobalBA for forced-pose initialization (world frame must stay fixed)" << endl;
     }
     else
@@ -2726,6 +2725,9 @@ void Tracking::CreateInitialMapMonocular()
              << ", trackedMapPoints=" << pKFcur->TrackedMapPoints(1)
              << ", mapPointsInMap=" << mpAtlas->MapPointsInMap()
              << ")" << endl;
+        // Reset flags so a subsequent initialisation attempt starts clean.
+        mbForcedPoseInitialization = false;
+        mbInitialFrameHasForcedPose = false;
         mpSystem->ResetActiveMap();
         return;
     }
@@ -2734,6 +2736,9 @@ void Tracking::CreateInitialMapMonocular()
     Sophus::SE3f Tc2w = pKFcur->GetPose();
     if(!mbForcedPoseInitialization)
     {
+        cout << "[INIT] scale normalization: medianDepth=" << medianDepth
+             << " invMedianDepth=" << invMedianDepth
+             << " MPs=" << mpAtlas->MapPointsInMap() << endl;
         Tc2w.translation() *= invMedianDepth;
         pKFcur->SetPose(Tc2w);
 
@@ -3447,7 +3452,7 @@ void Tracking::CreateNewKeyFrame(bool bForcedPose)
                     }
 
                     MapPoint* pNewMP = new MapPoint(x3D,pKF,mpAtlas->GetCurrentMap());
-                    pNewMP->mRgb = sampleBGR(mCurrentFrame.mImColor, mCurrentFrame.mvKeysUn[i].pt);
+                    pNewMP->mRgb = sampleBGR5x5(mCurrentFrame.mImColor, mCurrentFrame.mvKeysUn[i].pt);
                     pNewMP->AddObservation(pKF,i);
 
                     //Check if it is a stereo observation in order to not
