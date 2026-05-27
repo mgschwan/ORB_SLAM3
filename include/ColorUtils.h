@@ -35,6 +35,23 @@ inline cv::Vec3b sampleBGR5x5(const cv::Mat& img, const cv::Point2f& pt)
     return {(uchar)(b/n), (uchar)(g/n), (uchar)(r/n)};
 }
 
+inline cv::Vec3b sampleBGR(const cv::Mat& img, const cv::Point2f& pt)
+{
+    if (img.empty()) return {0, 0, 0};
+    const int x = std::max(0, std::min((int)pt.x, img.cols - 1));
+    const int y = std::max(0, std::min((int)pt.y, img.rows - 1));
+    if (img.channels() == 3) {
+        return img.at<cv::Vec3b>(y, x);
+    } else if (img.channels() == 4) {
+        auto v = img.at<cv::Vec4b>(y, x);
+        return {v[0], v[1], v[2]};
+    } else {
+        int gv = img.at<uchar>(y, x);
+        return {gv, gv, gv};
+    }
+}
+
+
 } // namespace ORB_SLAM3
 
 #endif // COLOR_UTILS_H

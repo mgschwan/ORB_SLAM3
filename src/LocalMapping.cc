@@ -478,6 +478,13 @@ void LocalMapping::CreateNewMapPoints()
             const float medianDepthKF2 = pKF2->ComputeSceneMedianDepth(2);
             const float ratioBaselineDepth = baseline/medianDepthKF2;
 
+            if(i==0) // log only for the first neighbor to avoid flooding
+                cout << "[CNMP] KF=" << mpCurrentKeyFrame->mnId
+                     << " neighbor=" << pKF2->mnId
+                     << " baseline=" << baseline
+                     << " medianDepth=" << medianDepthKF2
+                     << " ratio=" << ratioBaselineDepth << endl;
+
             if(ratioBaselineDepth<0.01)
                 continue;
         }
@@ -715,7 +722,13 @@ void LocalMapping::CreateNewMapPoints()
 
             // Triangulation is succesfull
             MapPoint* pMP = new MapPoint(x3D, mpCurrentKeyFrame, mpAtlas->GetCurrentMap());
-            pMP->mRgb = sampleBGR5x5(mpCurrentKeyFrame->mImColor, kp1.pt);
+            pMP->mRgb = sampleBGR(mpCurrentKeyFrame->mImColor, kp1.pt);
+            // Log first created point per KF pair to check depth distribution
+            static int cnmpLogCount = 0;
+            if(cnmpLogCount++ % 50 == 0)
+                cout << "[CNMP-PT] KF=" << mpCurrentKeyFrame->mnId
+                     << " world=(" << x3D.x() << "," << x3D.y() << "," << x3D.z() << ")"
+                     << " camZ=" << z1 << endl;
             if (bPointStereo)
                 countStereo++;
             
