@@ -71,6 +71,7 @@ unsigned long previousTime = 0;
 float deltaTime = 0.0;
 
 bool isCalibrated = false;
+bool sdMounted    = false;
 
 // Constants
 const float DEG_TO_RADIAN = 0.0174533;  // π/180
@@ -188,6 +189,95 @@ void sendCameraFrame() {
   }
 }
 
+// ---- Serial command handler ------------------------------------------------
+// Supports a two-step 'setwifi' command that writes credentials to /config.txt
+// and immediately reconnects.  Also accepts 'status' and 'help'.
+//
+// State machine so loop() is never blocked waiting for input.
+
+enum SerialCmdState { SERIAL_IDLE, SERIAL_WAIT_SSID, SERIAL_WAIT_PASS };
+static SerialCmdState serialCmdState = SERIAL_IDLE;
+static String         pendingSsid;
+
+void handleSerial() {
+  if (!Serial.available()) return;
+
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  if (line.isEmpty()) return;
+
+  switch (serialCmdState) {
+
+    case SERIAL_IDLE:
+      if (line == "setwifi") {
+        Serial.println("Enter SSID:");
+        serialCmdState = SERIAL_WAIT_SSID;
+      } else if (line == "status") {
+        Serial.printf("WiFi: %s  IP: %s  RSSI: %d dBm\n",
+                      WiFi.SSID().c_str(),
+                      WiFi.localIP().toString().c_str(),
+                      WiFi.RSSI());
+        Serial.printf("SD card mounted: %s\n", sdMounted ? "yes" : "no");
+        Serial.printf("TCP clients: %s\n", (tcpClient && tcpClient.connected()) ? "1" : "0");
+      } else if (line == "help") {
+        Serial.println("Commands:");
+        Serial.println("  setwifi   — save new WiFi credentials to SD and reconnect");
+        Serial.println("  status    — print WiFi/SD/TCP state");
+        Serial.println("  help      — this message");
+      } else {
+        Serial.printf("Unknown command '%s'. Type 'help'.\n", line.c_str());
+      }
+      break;
+
+    case SERIAL_WAIT_SSID:
+      pendingSsid = line;
+      Serial.println("Enter password:");
+      serialCmdState = SERIAL_WAIT_PASS;
+      break;
+
+    case SERIAL_WAIT_PASS: {
+      String newPass = line;
+      if (!sdMounted) {
+        Serial.println("ERROR: SD card not mounted — cannot save config.");
+        serialCmdState = SERIAL_IDLE;
+        break;
+      }
+      File f = SD_MMC.open("/config.txt", FILE_WRITE);
+      if (!f) {
+        Serial.println("ERROR: Could not open /config.txt for writing.");
+        serialCmdState = SERIAL_IDLE;
+        break;
+      }
+      f.println(pendingSsid);
+      f.println(newPass);
+      f.close();
+      Serial.printf("Saved SSID '%s' to /config.txt\n", pendingSsid.c_str());
+
+      // Apply immediately: drop any active TCP client, reconnect WiFi.
+      if (tcpClient && tcpClient.connected()) tcpClient.stop();
+      ssid     = pendingSsid;
+      password = newPass;
+      WiFi.disconnect(true);
+      delay(500);
+      WiFi.begin(ssid.c_str(), password.c_str());
+      Serial.print("Reconnecting");
+      for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
+        delay(500);
+        Serial.print(".");
+      }
+      Serial.println();
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+      } else {
+        Serial.println("WiFi connect failed — check credentials.");
+      }
+      serialCmdState = SERIAL_IDLE;
+      pendingSsid    = "";
+      break;
+    }
+  }
+}
+
 void printVector( vec3_t r ) {
   Serial.print( r.x, 2 );
   Serial.print( "," );
@@ -199,6 +289,8 @@ void printVector( vec3_t r ) {
 uint8_t localAddressBuffer[256];
 
 void loop() {
+
+  handleSerial();
 
   // Check for new TCP clients
   if (tcpServer.hasClient()) {
@@ -356,6 +448,7 @@ void setup() {
     Serial.println("Could not mount sdcard");
   } else {
     cardType = SD_MMC.cardType();
+    sdMounted = (cardType != CARD_NONE);
   }
 
   Serial.print("SD card is: ");
@@ -536,4 +629,5 @@ void setup() {
   tcpServer.begin();
   Serial.printf("TCP server started on port %d\n", TCP_PORT);
 
+  Serial.println("Type 'help' for serial commands (e.g. 'setwifi' to update credentials).");
 }

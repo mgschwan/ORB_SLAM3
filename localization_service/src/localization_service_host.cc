@@ -26,6 +26,7 @@
 #include "localization_service/config.h"
 #include "localization_service/slam_state.h"
 #include "localization_service/ingest_queue.h"
+#include "localization_service/espnode_source.h"
 #include "localization_service/calibration_manager.h"
 #include "localization_service/web_server.h"
 
@@ -109,10 +110,14 @@ int main(int argc, char** argv)
 {
     if (argc < 4) {
         std::cerr << "\nUsage: ./localization_service_host"
-                     " path_to_vocabulary path_to_settings camera_url|none"
-                     " [localize_only] [map_id] [--port N]\n\n"
-                     "  camera_url: V4L2 device, MJPEG/RTSP URL, or 'none' to use POST /api/frame\n"
-                     "  --port N  : HTTP server port (default: " << LOCALIZATION_SERVICE_PORT << ")\n\n";
+                     " path_to_vocabulary path_to_settings camera_url|none|espnode[:<ip>]"
+                     " [localize_only] [map_id] [--port N] [--espnode-fps N]\n\n"
+                     "  camera_url          : V4L2 device, MJPEG/RTSP URL\n"
+                     "  none                : frames via POST /api/frame\n"
+                     "  espnode             : auto-discover ESP32 node via UDP broadcast\n"
+                     "  espnode:<ip>        : connect to ESP32 node at given IP directly\n"
+                     "  --port N            : HTTP server port (default: " << LOCALIZATION_SERVICE_PORT << ")\n"
+                     "  --espnode-fps N     : frame trigger rate for espnode (default: 10)\n\n";
         return 0; // appimage builder needs to be able to call it without an error code
     }
 
@@ -121,17 +126,39 @@ int main(int argc, char** argv)
     const std::string cameraSource = argv[3];
     const bool        startInLocMode = (argc >= 5);
     const long unsigned int mapId  = (argc >= 6) ? std::stoul(argv[5]) : 0;
-    const bool        useIngest    = (cameraSource == "none");
 
-    // Optional --port flag (can appear anywhere after the 3 positional args)
-    int port = LOCALIZATION_SERVICE_PORT;
+    const bool useEspnode = (cameraSource.rfind("espnode", 0) == 0);
+    const bool useIngest  = (cameraSource == "none") || useEspnode;
+
+    // Optional flags (can appear anywhere after the 3 positional args)
+    int   port       = LOCALIZATION_SERVICE_PORT;
+    float espnodeFps = 10.0f;
     for (int i = 4; i < argc - 1; ++i) {
-        if (std::string(argv[i]) == "--port") {
+        std::string arg(argv[i]);
+        if (arg == "--port")
             port = std::stoi(argv[i + 1]);
-            break;
-        }
+        else if (arg == "--espnode-fps")
+            espnodeFps = std::stof(argv[i + 1]);
     }
 
+    // ---- ESP32 node setup (discovery before SLAM init to fail fast) ----------
+    ImuBuffer imuBuf;
+    std::unique_ptr<EspnodeSource> espSrc;
+    if (useEspnode) {
+        std::string espIp;
+        // "espnode:<ip>" → use provided IP; "espnode" alone → auto-discover
+        if (cameraSource.size() > 8 && cameraSource[7] == ':')
+            espIp = cameraSource.substr(8);
+        espSrc = std::make_unique<EspnodeSource>(espIp, espnodeFps);
+        if (espSrc->discover().empty()) {
+            std::cerr << "Failed to discover ESP32 node. Exiting.\n";
+            return 1;
+        }
+        std::cout << "ESP32 node at " << espSrc->ip()
+                  << "  trigger fps=" << espnodeFps << "\n";
+    }
+
+    // ---- Camera open (skipped for espnode and 'none' modes) ------------------
     cv::VideoCapture cap;
     if (!useIngest) {
         cap = openCamera(cameraSource);
@@ -139,7 +166,7 @@ int main(int argc, char** argv)
             std::cerr << "Failed to open camera: " << cameraSource << "\n";
             return 1;
         }
-    } else {
+    } else if (!useEspnode) {
         std::cout << "Camera source: none — frames will be received via POST /api/frame\n";
     }
 
@@ -166,6 +193,10 @@ int main(int argc, char** argv)
         allowMapCreation = false;
         slam.SetAllowMapCreation(false);
     }
+
+    // Start espnode session (after SLAM is ready to accept frames)
+    if (espSrc)
+        espSrc->start(ingestQueue, imuBuf);
 
     // Install SIGINT handler
     g_flags = &flags;
@@ -225,8 +256,20 @@ int main(int argc, char** argv)
             tframe = ingest.timestamp;
             if (ingest.hasPose)
                 slam.SetNextFramePose(ingest.Tcw);
-            // IMU data from ingest.{ax,ay,az,gx,gy,gz} is available here
-            // for future TrackMonocular_Inertial support.
+
+            // Drain IMU samples that arrived since the last frame.
+            if (espSrc) {
+                auto imuSamples = imuBuf.drain();
+                if (!imuSamples.empty()) {
+                    const auto& latest = imuSamples.back();
+                    std::cout << "IMU " << imuSamples.size() << " samples"
+                              << "  R=" << latest.roll
+                              << " P=" << latest.pitch
+                              << " Y=" << latest.yaw
+                              << "  V=" << latest.vx << "," << latest.vy << "," << latest.vz
+                              << " mm/s\n";
+                }
+            }
         } else {
             // Always drain the capture buffer so we get the freshest frame.
             cap.read(frame);
@@ -284,6 +327,7 @@ int main(int argc, char** argv)
     // ---- Shutdown ----------------------------------------------------------
     std::cout << "Main loop ended. Shutting down...\n";
     flags.running = false;
+    if (espSrc) espSrc->stop();
     controlThread.join();
 
     slam.Shutdown();
