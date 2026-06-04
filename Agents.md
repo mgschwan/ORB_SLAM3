@@ -100,7 +100,11 @@ ORB_SLAM3/
 ├── Thirdparty/              - Bundled third-party libraries
 │   ├── DBoW2/               - Bag-of-Words place recognition library
 │   ├── g2o/                 - Graph-based nonlinear optimization library
-│   └── Sophus/              - Lie group math library (SE3, SO3, Sim3)
+│   ├── Sophus/              - Lie group math library (SE3, SO3, Sim3)
+│   └── orblsammer_espnode/  - ESP32-S3 firmware: camera+IMU WiFi sensor node
+│       ├── src/xostudio_hud.ino   - PlatformIO firmware (camera+IMU TCP streamer)
+│       ├── src/test_tcp_hud.py    - Python test client (UDP discovery + TCP receive)
+│       └── platformio.ini         - PlatformIO build config (target: freenove_esp32_s3_wroom)
 │
 ├── Vocabulary/
 │   └── ORBvoc.txt.tar.gz   - ORB vocabulary for BoW (must be extracted before use)
@@ -329,3 +333,80 @@ Example for `localization_service_host`:
 ```bash
 ./localization_service/localization_service_host path_to_vocabulary path_to_settings camera_url [localize_only] [map_id]
 ```
+
+---
+
+## ESP32-S3 Sensor Node (`Thirdparty/orblsammer_espnode/`)
+
+An ESP32-S3 firmware + test client that acts as the physical camera and IMU front-end for the localization pipeline. Frames and IMU data arrive over WiFi TCP; the host localization service feeds them into ORB-SLAM3.
+
+### Hardware
+
+| Component | Detail |
+|-----------|--------|
+| MCU | Freenove ESP32-S3 WROOM (has PSRAM) |
+| Camera | OV5640 — `CAMERA_MODEL_ESP32S3_EYE` pin mapping, QVGA/JPEG quality 12 |
+| IMU | MPU-6050 on I2C (SDA=GPIO21, SCL=GPIO20, 400 kHz) — roll/pitch/yaw + velocity |
+| Storage | SD/MMC (CLK=39, CMD=38, D0=40) — optional, holds WiFi credentials |
+
+### Firmware: `src/xostudio_hud.ino`
+
+Built with PlatformIO (`platformio.ini`, target `freenove_esp32_s3_wroom`).
+
+**Setup sequence:**
+1. I2C + MPU-6050 init; `imu.setBias()` after a 5-second still period.
+2. SD card mounted; reads SSID/password from `/config.txt` (lines 1 & 2) if present, otherwise uses compile-time defaults.
+3. Camera init: PSRAM frame buffer, `CAMERA_GRAB_LATEST`, brightness +2, saturation −2, AGC on, gain ceiling ×64, AEC off, vertical flip on.
+4. WiFi connected (station mode, sleep disabled).
+5. TCP server started on **port 11212**.
+
+**Main loop** (connect-per-burst model, single client):
+1. Accept TCP client — new connection replaces any existing one.
+2. IMU update — `fusion.update()` every iteration; readings accumulate in a ring buffer (up to 128 frames × 6 floats).
+3. UDP discovery broadcast — every 100 iterations, broadcasts the device IP on **UDP port 11211**.
+4. TCP transmit — one camera frame as `PACKET_TYPE_IMAGE`, then all buffered IMU frames as `PACKET_TYPE_IMU`; then close.
+
+### Wire Protocol
+
+All packets share a **9-byte little-endian header**:
+
+```
+uint8_t  packet_type   // 0x01 = IMAGE, 0x02 = IMU
+uint32_t frame_time    // millis() at send time
+uint32_t total_size    // payload byte count
+```
+
+An IMU payload is `N × 24` bytes; each frame is six `float32` values:
+
+```
+roll, pitch, yaw  (radians, from accIntegral)
+vx, vy, vz        (mm/s, GRAVITY = 9810 mm/s²)
+```
+
+### Network Ports
+
+| Port | Protocol | Direction | Purpose |
+|------|----------|-----------|---------|
+| 11211 | UDP broadcast | ESP32 → LAN | IP auto-discovery |
+| 11212 | TCP | host → ESP32 | Camera frame + IMU retrieval |
+
+### Test Client: `src/test_tcp_hud.py`
+
+Python 3 script for end-to-end testing (requires `opencv-python`, `numpy`):
+
+```bash
+python src/test_tcp_hud.py
+```
+
+- **Discovery phase:** listens on UDP 11211 for the broadcast IP.
+- **Receive loop:** reconnects to TCP 11212 each burst; decodes `PACKET_TYPE_IMAGE` with OpenCV (displays in a window, `q` to quit) and prints `PACKET_TYPE_IMU` tuples.
+
+### Build & Flash
+
+```bash
+# Install PlatformIO CLI or use the VS Code extension
+pio run -t upload      # compile and flash
+pio device monitor     # serial output at 115200 baud
+```
+
+WiFi credentials go in `/config.txt` on the SD card (line 1 = SSID, line 2 = password) to avoid recompiling for different networks.
