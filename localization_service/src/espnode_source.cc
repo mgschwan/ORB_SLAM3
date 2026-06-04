@@ -119,19 +119,29 @@ void EspnodeSource::stop() {
 }
 
 bool EspnodeSource::recvAll(int fd, void* buf, size_t n) {
-    auto* p   = static_cast<uint8_t*>(buf);
+    auto* p    = static_cast<uint8_t*>(buf);
     size_t got = 0;
+    int    retries = 0;
     while (got < n) {
         if (!running_) return false;
         ssize_t r = recv(fd, p + got, n - got, 0);
         if (r > 0) {
             got += static_cast<size_t>(r);
+            retries = 0;
         } else if (r == 0) {
-            return false;  // peer closed
+            std::cerr << "espnode recvAll: connection closed after "
+                      << got << "/" << n << " bytes\n";
+            return false;
         } else if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
-            continue;      // timeout tick or signal — retry
+            ++retries;
+            if (retries % 5 == 0)   // print only every 5 timeouts to avoid spam
+                std::cerr << "espnode recvAll: timeout waiting for bytes "
+                          << got << ".." << n << " (retry " << retries << ")\n";
+            continue;
         } else {
-            return false;  // real error
+            std::cerr << "espnode recvAll: recv error after " << got << "/" << n
+                      << " bytes: " << strerror(errno) << "\n";
+            return false;
         }
     }
     return true;
@@ -154,7 +164,17 @@ bool EspnodeSource::readPacket(int fd, Packet& out) {
 void EspnodeSource::rxLoop(int fd) {
     while (running_) {
         Packet pkt;
-        if (!readPacket(fd, pkt)) break;
+        if (!readPacket(fd, pkt)) {
+            std::cerr << "espnode RX: readPacket returned false"
+                      << " (errno=" << errno << " " << strerror(errno) << ")\n";
+            break;
+        }
+        const char* typeName =
+            pkt.type == PTYPE_IMAGE   ? "IMAGE" :
+            pkt.type == PTYPE_IMU     ? "IMU"   : "UNKNOWN";
+        std::cout << "espnode RX: " << typeName
+                  << " t=" << pkt.esp_millis
+                  << " payload=" << pkt.payload.size() << " bytes\n";
         std::lock_guard<std::mutex> lk(pktMtx_);
         pktQueue_.push_back(std::move(pkt));
     }
@@ -204,17 +224,24 @@ void EspnodeSource::sessionLoop(IngestQueue& frameQueue, ImuBuffer& imuBuf) {
 
         // ---- TX + dispatch loop ----------------------------------------
         // Send the first trigger immediately, then at fps_ rate.
+        // pendingTriggers ensures we never queue more than one trigger at a
+        // time: the next trigger is held until the previous frame arrives.
         auto lastTrigger = clock::now() - triggerInterval;
+        int triggerCount    = 0;
+        int pendingTriggers = 0;
 
         while (running_ && !rxDone_) {
-            // TX: fire trigger when due
+            // TX: fire trigger when due and no frame is already in flight.
             auto now = clock::now();
-            if (now - lastTrigger >= triggerInterval) {
+            if (pendingTriggers == 0 && now - lastTrigger >= triggerInterval) {
                 uint8_t trig = PTYPE_TRIGGER;
                 if (send(fd, &trig, 1, MSG_NOSIGNAL) != 1) {
                     std::cerr << "espnode: trigger send failed\n";
                     break;
                 }
+                ++triggerCount;
+                ++pendingTriggers;
+                std::cout << "espnode TX: trigger #" << triggerCount << "\n";
                 lastTrigger = now;
             }
 
@@ -227,6 +254,7 @@ void EspnodeSource::sessionLoop(IngestQueue& frameQueue, ImuBuffer& imuBuf) {
 
             for (auto& pkt : batch) {
                 if (pkt.type == PTYPE_IMAGE) {
+                    if (pendingTriggers > 0) --pendingTriggers;
                     if (pkt.payload.empty()) continue;
 
                     cv::Mat img = cv::imdecode(pkt.payload, cv::IMREAD_COLOR);

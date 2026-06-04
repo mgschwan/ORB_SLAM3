@@ -126,6 +126,8 @@ void quaternionToEuler();
 
 // Send all buffered IMU frames to the connected client, then reset the buffer.
 // Payload: N × 6 × float32, little-endian (same layout as imuFramesBuffer).
+// On a full send buffer, the batch is dropped (not fatal) — the next timer
+// tick will send fresh samples.
 void sendImuFrames() {
   if (currentIMUFrameIndex == 0) return;
 
@@ -136,13 +138,15 @@ void sendImuFrames() {
   hdr.total_size  = payloadSize;
 
   if (tcpClient.write((uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr)) {
-    Serial.println("IMU header send error");
-    tcpClient.stop();
+    Serial.printf("IMU send buffer full, dropping %d frames\n", currentIMUFrameIndex);
+    currentIMUFrameIndex = 0;
+    lastImuSendTime = millis();
     return;
   }
   if (tcpClient.write((uint8_t*)imuFramesBuffer, payloadSize) != payloadSize) {
-    Serial.println("IMU data send error");
-    tcpClient.stop();
+    Serial.printf("IMU data truncated, dropping %d frames\n", currentIMUFrameIndex);
+    currentIMUFrameIndex = 0;
+    lastImuSendTime = millis();
     return;
   }
   Serial.printf("Sent %d IMU frames\n", currentIMUFrameIndex);
@@ -151,6 +155,9 @@ void sendImuFrames() {
 }
 
 // Capture one JPEG frame and send it to the connected client.
+// tcpClient.flush() is called after all chunks are queued so the TCP send
+// buffer is guaranteed to be clear before this function returns — preventing
+// a subsequent sendImuFrames() from seeing a full buffer.
 void sendCameraFrame() {
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) {
@@ -170,7 +177,9 @@ void sendCameraFrame() {
     size_t remaining = fb->len;
     while (ok && remaining > 0) {
       size_t n = (remaining < CHUNK) ? remaining : CHUNK;
-      if (tcpClient.write(ptr, n) != n) {
+      size_t sent = tcpClient.write(ptr, n);
+      if (sent != n) {
+        Serial.printf("Image chunk error: sent %d/%d\n", sent, n);
         ok = false;
       } else {
         ptr += n;
@@ -178,14 +187,18 @@ void sendCameraFrame() {
         if (remaining > 0) delay(5);
       }
     }
-  }
-  esp_camera_fb_return(fb);
-
-  if (!ok) {
-    Serial.println("Image send error");
-    tcpClient.stop();
   } else {
-    Serial.printf("Sent frame (%u bytes)\n", fb->len);
+    Serial.println("Image header send error");
+  }
+
+  uint32_t frameLen = fb->len;
+  esp_camera_fb_return(fb);  // free camera buffer before blocking on flush
+
+  if (ok) {
+    tcpClient.flush();        // wait until the host has ACK'd all chunks
+    Serial.printf("Sent frame (%u bytes)\n", frameLen);
+  } else {
+    tcpClient.stop();
   }
 }
 
