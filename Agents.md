@@ -64,7 +64,20 @@ ORB_SLAM3/
 │
 ├── localization_service/    - Main application (live camera SLAM / localization service)
 │   ├── src/
-│   │   └── localization_service_host.cc - [CUSTOM] Live camera stream with localization mode
+│   │   ├── localization_service_host.cc - [CUSTOM] Main entry point: arg parsing, tracking loop
+│   │   ├── espnode_source.cc            - [CUSTOM] ESP32 TCP session + ImuBuffer
+│   │   ├── slam_state.cc                - Shared flags and pose state
+│   │   ├── ingest_queue.cc              - IngestQueue push/pop
+│   │   ├── calibration_manager.cc       - Chessboard calibration logic
+│   │   └── web_server.cc                - HTTP server and all route handlers
+│   ├── include/localization_service/
+│   │   ├── args.h               - [CUSTOM] ServiceArgs, parseArgs() — all CLI flags
+│   │   ├── config.h             - Port and tuning constants
+│   │   ├── slam_state.h         - LifecycleFlags, PoseState
+│   │   ├── ingest_queue.h       - IngestFrame, IngestQueue
+│   │   ├── espnode_source.h     - [CUSTOM] ImuSample, ImuBuffer, EspnodeSource
+│   │   ├── calibration_manager.h
+│   │   └── web_server.h
 │   ├── localization_service_host        - [BUILT EXECUTABLE]
 │   ├── html/
 │   │   ├── index.html       - Web frontend for SLAM control
@@ -186,8 +199,10 @@ When activated via `SLAM.ActivateLocalizationMode()`:
     - Supports an optional `localize_only` command-line argument.
     - Specifically designed to work with TUM dataset format but with the improved localization logic.
 - **`localization_service/src/localization_service_host.cc`** (built to `localization_service/localization_service_host`):
-    - Uses `cv::VideoCapture` to process streams from a URL (e.g., IP camera, MJPEG stream). Now also handles local V4L2 device formats directly (e.g., `/dev/video0`).
-    - Passing `none` as the camera source skips `VideoCapture` entirely; frames are then supplied exclusively via `POST /api/frame`.
+    - **Camera sources**: V4L2 device, MJPEG/RTSP URL, `none` (HTTP push), `espnode` / `espnode:<ip>` (ESP32 sensor node).
+    - **CLI**: all optional arguments are named flags parsed by `args.h::parseArgs()`. No positional optional arguments.
+    - Passing `none` as the camera source uses the `IngestQueue` path; frames are supplied via `POST /api/frame`.
+    - Passing `espnode` auto-discovers the ESP32 via UDP and opens a persistent TCP session (`EspnodeSource`). Frames arrive via trigger-response; IMU data streams continuously into `ImuBuffer` and is drained once per tracking frame.
     - Acts as an asynchronous Web Interface for manual control over SLAM operations.
     - Features endpoints for REST API Status (`/api/status`) serving JSON variables, action endpoints (`/pause`, `/resume`, `/newmap`, `/switchmap?id=X`), and safely serves static frontend assets (HTML, CSS, JS) directly out of `localization_service/html/`.
     - Frame ingest endpoint `POST /api/frame`: accepts a raw JPEG body and optional `ts`/IMU query parameters. Returns a JSON response with `queued`, `tracking_state`, and `pose` fields. An empty-body POST skips frame submission and returns the current pose snapshot — used for polling after a frame has been queued.
@@ -328,17 +343,62 @@ rm -rf Thirdparty/Sophus/build
 ```
 
 ## Usage
-The new executables are output to their respective source directories after compilation.
-Example for `localization_service_host`:
+
+Executables are output to their respective source directories after compilation.
+
+### `localization_service_host`
+
+```
+./localization_service/localization_service_host <vocab> <settings> <camera_source> [options]
+```
+
+**`camera_source`** values:
+
+| Value | Behaviour |
+|-------|-----------|
+| `/dev/videoN` or `N` | V4L2 device |
+| `http://…` / RTSP URL | MJPEG or RTSP stream |
+| `none` | Frames pushed via `POST /api/frame` |
+| `espnode` | Auto-discover ESP32 node via UDP broadcast (port 11211) |
+| `espnode:<ip>` | Connect to ESP32 node at the given IP directly |
+
+**Options** (all optional, any order):
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--localize` | off | Start in localization-only mode |
+| `--map-id <n>` | `0` | Map index to activate on startup |
+| `--port <n>` | `11142` | HTTP control server port |
+| `--espnode-fps <n>` | `10` | Frame trigger rate for espnode source |
+
+**Examples:**
+
 ```bash
-./localization_service/localization_service_host path_to_vocabulary path_to_settings camera_url [localize_only] [map_id]
+# Mapping from USB webcam
+./localization_service/localization_service_host \
+    Vocabulary/ORBvoc.txt example.yaml /dev/video0
+
+# Localization from a saved map
+./localization_service/localization_service_host \
+    Vocabulary/ORBvoc.txt example.yaml /dev/video0 \
+    --localize --map-id 0
+
+# ESP32 sensor node, auto-discover, 15 fps
+./localization_service/localization_service_host \
+    Vocabulary/ORBvoc.txt example.yaml espnode \
+    --espnode-fps 15
+
+# ESP32 sensor node, fixed IP, localization mode
+./localization_service/localization_service_host \
+    Vocabulary/ORBvoc.txt example.yaml espnode:192.168.1.42 \
+    --localize --map-id 0 --espnode-fps 10
 ```
 
 ---
 
 ## ESP32-S3 Sensor Node (`Thirdparty/orblsammer_espnode/`)
 
-An ESP32-S3 firmware + test client that acts as the physical camera and IMU front-end for the localization pipeline. Frames and IMU data arrive over WiFi TCP; the host localization service feeds them into ORB-SLAM3.
+An ESP32-S3 firmware + test client that acts as the physical camera and IMU front-end for the localization pipeline. Frames and IMU data arrive over a single persistent WiFi TCP connection; the host localization service feeds them into ORB-SLAM3 via `EspnodeSource`.
 
 ### Hardware
 
@@ -355,23 +415,25 @@ Built with PlatformIO (`platformio.ini`, target `freenove_esp32_s3_wroom`).
 
 **Setup sequence:**
 1. I2C + MPU-6050 init; `imu.setBias()` after a 5-second still period.
-2. SD card mounted; reads SSID/password from `/config.txt` (lines 1 & 2) if present, otherwise uses compile-time defaults.
+2. SD card mounted; reads SSID/password from `/config.txt` (lines 1 & 2) if present.
 3. Camera init: PSRAM frame buffer, `CAMERA_GRAB_LATEST`, brightness +2, saturation −2, AGC on, gain ceiling ×64, AEC off, vertical flip on.
 4. WiFi connected (station mode, sleep disabled).
 5. TCP server started on **port 11212**.
 
-**Main loop** (connect-per-burst model, single client):
-1. Accept TCP client — new connection replaces any existing one.
-2. IMU update — `fusion.update()` every iteration; readings accumulate in a ring buffer (up to 128 frames × 6 floats).
-3. UDP discovery broadcast — every 100 iterations, broadcasts the device IP on **UDP port 11211**.
-4. TCP transmit — one camera frame as `PACKET_TYPE_IMAGE`, then all buffered IMU frames as `PACKET_TYPE_IMU`; then close.
+**Main loop** (persistent single-client TCP session):
+1. `handleSerial()` — processes serial commands non-blocking.
+2. TCP client accepted; existing client replaced if a new one connects.
+3. IMU update every iteration; readings accumulate in ring buffer (up to 128 × 6 floats).
+4. UDP discovery broadcast every 100 iterations on **UDP port 11211**.
+5. **TCP receive**: drain trigger bytes from host. Each `PACKET_TYPE_TRIGGER` (0x03) calls `sendCameraFrame()`, which sends IMAGE header + JPEG chunks then calls `tcpClient.flush()` before returning.
+6. **TCP send**: if 50 ms have elapsed since last IMU flush, call `sendImuFrames()`. Write failures silently drop the batch without disconnecting.
 
 ### Wire Protocol
 
-All packets share a **9-byte little-endian header**:
+All packets share a **9-byte packed little-endian header**:
 
 ```
-uint8_t  packet_type   // 0x01 = IMAGE, 0x02 = IMU
+uint8_t  packet_type   // 0x01=IMAGE  0x02=IMU  0x03=TRIGGER (host→device, no header)
 uint32_t frame_time    // millis() at send time
 uint32_t total_size    // payload byte count
 ```
@@ -383,30 +445,48 @@ roll, pitch, yaw  (radians, from accIntegral)
 vx, vy, vz        (mm/s, GRAVITY = 9810 mm/s²)
 ```
 
+**Flow control**: host sends at most one trigger at a time (`pendingTriggers` counter in `EspnodeSource`). The device calls `tcpClient.flush()` after each frame so the TCP send buffer is clear before the next IMU write.
+
 ### Network Ports
 
 | Port | Protocol | Direction | Purpose |
 |------|----------|-----------|---------|
 | 11211 | UDP broadcast | ESP32 → LAN | IP auto-discovery |
-| 11212 | TCP | host → ESP32 | Camera frame + IMU retrieval |
+| 11212 | TCP | bidirectional | Trigger (host→device), IMAGE + IMU stream (device→host) |
+
+### Serial Commands
+
+| Command | Action |
+|---------|--------|
+| `setwifi` | Interactive: enter SSID then password, write to `/config.txt`, reconnect WiFi |
+| `status` | Print WiFi IP/RSSI, SD card state, TCP client count |
+| `help` | List available commands |
+
+### Host-side integration: `EspnodeSource`
+
+**Files:** `localization_service/include/localization_service/espnode_source.h` and `src/espnode_source.cc`
+
+- `EspnodeSource(ip, fps)` — `ip=""` for UDP auto-discovery, or a fixed IP.
+- `discover(timeoutMs)` — binds UDP 11211, waits for the broadcast, returns the IP.
+- `start(frameQueue, imuBuf)` — launches session thread (reconnects automatically on disconnect).
+- `stop()` — signals shutdown and joins.
+
+Two threads per connection: RX thread (blocking reads, `SO_RCVTIMEO=5s`) pushes packets onto a mutex-protected deque; session thread sends triggers and dispatches IMAGE → `IngestQueue` (via `cv::imdecode`) and IMU → `ImuBuffer`. `ImuBuffer` is drained once per frame in the main tracking loop.
 
 ### Test Client: `src/test_tcp_hud.py`
 
-Python 3 script for end-to-end testing (requires `opencv-python`, `numpy`):
-
 ```bash
-python src/test_tcp_hud.py
+python src/test_tcp_hud.py       # 5 fps (default)
+python src/test_tcp_hud.py 15    # 15 fps
 ```
 
-- **Discovery phase:** listens on UDP 11211 for the broadcast IP.
-- **Receive loop:** reconnects to TCP 11212 each burst; decodes `PACKET_TYPE_IMAGE` with OpenCV (displays in a window, `q` to quit) and prints `PACKET_TYPE_IMU` tuples.
+Two-thread design (dedicated RX thread with 5s blocking timeout + main thread for triggers) prevents framing corruption from mid-payload socket timeouts. Displays frames in a window (`q` to quit) and prints IMU readings to the console.
 
 ### Build & Flash
 
 ```bash
-# Install PlatformIO CLI or use the VS Code extension
 pio run -t upload      # compile and flash
 pio device monitor     # serial output at 115200 baud
 ```
 
-WiFi credentials go in `/config.txt` on the SD card (line 1 = SSID, line 2 = password) to avoid recompiling for different networks.
+WiFi credentials: use the `setwifi` serial command, or place `/config.txt` on the SD card (line 1 = SSID, line 2 = password).

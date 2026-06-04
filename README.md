@@ -70,11 +70,32 @@ Open `http://localhost:11142` to access the web interface. Once the map looks go
     ../Vocabulary/ORBvoc.txt \
     example.yaml \
     /dev/video0 \
-    localize_only \
-    0
+    --localize \
+    --map-id 0
 ```
 
-The last argument is the map index to relocalize against (default `0`).
+### ESP32 sensor node
+
+The [orblsammer_espnode](Thirdparty/orblsammer_espnode/) firmware turns an ESP32-S3 with an OV5640 camera and MPU-6050 IMU into a wireless sensor node. The host discovers it automatically via UDP broadcast and drives it over a single persistent TCP connection.
+
+```bash
+# Auto-discover the node
+./localization_service_host \
+    ../Vocabulary/ORBvoc.txt \
+    example.yaml \
+    espnode \
+    --espnode-fps 10
+
+# Connect directly by IP (skip discovery wait)
+./localization_service_host \
+    ../Vocabulary/ORBvoc.txt \
+    example.yaml \
+    espnode:192.168.1.42 \
+    --espnode-fps 15 \
+    --localize
+```
+
+The host sends a single-byte trigger at the configured FPS rate; the node responds with a JPEG frame. IMU data (roll/pitch/yaw + velocity) is streamed continuously at ~20 Hz between frames over the same connection. See [ESP32 sensor node](#esp32-sensor-node-1) for hardware details.
 
 ### Camera sources
 
@@ -84,9 +105,22 @@ The last argument is the map index to relocalize against (default `0`).
 | V4L2 device path | `/dev/video2` |
 | MJPEG / RTSP stream | `http://192.168.1.10:4747/video` |
 | Tello drone | use `tools/tello_camera_server.py` then point to its output URL |
+| ESP32 sensor node (auto-discover) | `espnode` |
+| ESP32 sensor node (fixed IP) | `espnode:192.168.1.42` |
 | External push (API) | `none` — frames are submitted via `POST /api/frame` |
 
-When started with `none`, the service waits for frames to be pushed over HTTP instead of reading from a camera device. See [Frame ingest](#frame-ingest) and [Single-shot localization](#single-shot-localization).
+When started with `none` or `espnode`, the service uses the ingest queue path instead of `VideoCapture`. See [Frame ingest](#frame-ingest) and [Single-shot localization](#single-shot-localization).
+
+### Command-line options
+
+All options after the three required positional arguments are named flags:
+
+| Flag | Description |
+|------|-------------|
+| `--localize` | Start in localization-only mode (disables new map creation) |
+| `--map-id <n>` | Map index to activate on startup (default: `0`) |
+| `--port <n>` | HTTP server port (default: `11142`) |
+| `--espnode-fps <n>` | Frame trigger rate when using an ESP32 node (default: `10`) |
 
 ## HTTP API
 
@@ -250,8 +284,8 @@ Start the service in localization-only mode with `none` as the camera source:
     ../Vocabulary/ORBvoc.txt \
     example.yaml \
     none \
-    localize_only \
-    0
+    --localize \
+    --map-id 0
 ```
 
 Then from the device (Python example, requires `opencv-python` and `requests`):
@@ -299,14 +333,18 @@ A ready-to-run streaming version that forwards a full camera feed is provided in
 ```
 localization_service/
   src/
-    localization_service_host.cc  — main(): arg parsing, SLAM init, tracking loop
+    localization_service_host.cc  — main(): SLAM init, tracking loop
+    espnode_source.cc             — ESP32 TCP session, IMU buffer, frame ingest
     slam_state.cc                 — shared atomic flags and pose state
     calibration_manager.cc        — chessboard calibration logic
     web_server.cc                 — HTTP server and all route handlers
+    ingest_queue.cc               — IngestQueue push/pop implementation
   include/localization_service/
+    args.h                        — ServiceArgs struct, parseArgs() (all CLI flags)
     config.h                      — port define (11142) and tuning constants
     slam_state.h                  — LifecycleFlags, PoseState
     ingest_queue.h                — IngestFrame, IngestQueue (frame push API)
+    espnode_source.h              — ImuSample, ImuBuffer, EspnodeSource
     calibration_manager.h         — CalibrationManager
     web_server.h                  — WebServer
   html/
@@ -317,7 +355,75 @@ localization_service/
     tello_camera_server.py        — relay server for Tello drone camera
     send_camera_frames.py         — forward a local camera to the frame ingest API
   example.yaml                    — sample camera configuration
+
+Thirdparty/orblsammer_espnode/
+  src/
+    xostudio_hud.ino              — PlatformIO firmware (persistent TCP + HTTP IMU)
+    test_tcp_hud.py               — Python test client (discovery, triggers, IMU stream)
+  platformio.ini                  — PlatformIO build config (freenove_esp32_s3_wroom)
 ```
+
+## ESP32 sensor node
+
+The ESP32-S3 firmware in `Thirdparty/orblsammer_espnode/` implements a lightweight sensor node that streams camera frames and IMU data over WiFi.
+
+### Hardware
+
+| Component | Detail |
+|-----------|--------|
+| MCU | Freenove ESP32-S3 WROOM (PSRAM) |
+| Camera | OV5640 — QVGA, JPEG quality 12 |
+| IMU | MPU-6050 on I2C (SDA=21, SCL=20) — roll/pitch/yaw + velocity via `accIntegral` |
+| Storage | SD/MMC — optional, holds WiFi credentials in `/config.txt` |
+
+### Wire protocol
+
+All packets share a 9-byte packed little-endian header:
+
+```
+uint8_t  packet_type   // 0x01=IMAGE  0x02=IMU  0x03=TRIGGER(host→device)
+uint32_t frame_time    // ESP32 millis()
+uint32_t total_size    // payload byte count
+```
+
+IMU payload: `N × 6 × float32` — `roll, pitch, yaw` (radians), `vx, vy, vz` (mm/s).
+
+The host drives the session:
+- **Trigger** (`0x03`, 1 byte, no header) — host → ESP32 to request one JPEG frame. At most one trigger is in-flight at a time; the next is held until the IMAGE response arrives.
+- **IMU stream** — ESP32 pushes accumulated IMU frames every 50 ms automatically, independent of triggers.
+
+### Flashing and WiFi setup
+
+```bash
+pio run -t upload          # compile and flash via PlatformIO
+pio device monitor         # serial console at 115200 baud
+```
+
+WiFi credentials can be provisioned without recompiling via the serial console:
+
+```
+> setwifi
+Enter SSID:
+> MyNetwork
+Enter password:
+> ••••••••
+Saved SSID 'MyNetwork' to /config.txt
+Reconnecting...
+Connected. IP: 192.168.1.42
+```
+
+Other serial commands: `status` (print WiFi/SD/TCP state), `help`.
+
+Alternatively, write credentials to `/config.txt` on the SD card directly (line 1 = SSID, line 2 = password).
+
+### Testing without the host
+
+```bash
+python Thirdparty/orblsammer_espnode/src/test_tcp_hud.py        # 5 fps (default)
+python Thirdparty/orblsammer_espnode/src/test_tcp_hud.py 15     # 15 fps
+```
+
+The test client auto-discovers the node via UDP, opens a persistent TCP connection, sends triggers at the configured FPS, and displays incoming frames and IMU readings.
 
 ## Underlying technology
 
