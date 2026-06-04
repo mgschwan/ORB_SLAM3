@@ -23,6 +23,7 @@
 #include <System.h>
 #include <sophus/se3.hpp>
 
+#include "localization_service/args.h"
 #include "localization_service/config.h"
 #include "localization_service/slam_state.h"
 #include "localization_service/ingest_queue.h"
@@ -108,38 +109,12 @@ static cv::VideoCapture openCamera(const std::string& source)
 
 int main(int argc, char** argv)
 {
-    if (argc < 4) {
-        std::cerr << "\nUsage: ./localization_service_host"
-                     " path_to_vocabulary path_to_settings camera_url|none|espnode[:<ip>]"
-                     " [localize_only] [map_id] [--port N] [--espnode-fps N]\n\n"
-                     "  camera_url          : V4L2 device, MJPEG/RTSP URL\n"
-                     "  none                : frames via POST /api/frame\n"
-                     "  espnode             : auto-discover ESP32 node via UDP broadcast\n"
-                     "  espnode:<ip>        : connect to ESP32 node at given IP directly\n"
-                     "  --port N            : HTTP server port (default: " << LOCALIZATION_SERVICE_PORT << ")\n"
-                     "  --espnode-fps N     : frame trigger rate for espnode (default: 10)\n\n";
-        return 0; // appimage builder needs to be able to call it without an error code
-    }
+    ServiceArgs args;
+    if (!parseArgs(argc, argv, args))
+        return 0; // appimage builder needs a zero exit code on bad args
 
-    const std::string vocabPath    = argv[1];
-    const std::string settingsPath = argv[2];
-    const std::string cameraSource = argv[3];
-    const bool        startInLocMode = (argc >= 5);
-    const long unsigned int mapId  = (argc >= 6) ? std::stoul(argv[5]) : 0;
-
-    const bool useEspnode = (cameraSource.rfind("espnode", 0) == 0);
-    const bool useIngest  = (cameraSource == "none") || useEspnode;
-
-    // Optional flags (can appear anywhere after the 3 positional args)
-    int   port       = LOCALIZATION_SERVICE_PORT;
-    float espnodeFps = 10.0f;
-    for (int i = 4; i < argc - 1; ++i) {
-        std::string arg(argv[i]);
-        if (arg == "--port")
-            port = std::stoi(argv[i + 1]);
-        else if (arg == "--espnode-fps")
-            espnodeFps = std::stof(argv[i + 1]);
-    }
+    const bool useEspnode = (args.cameraSource.rfind("espnode", 0) == 0);
+    const bool useIngest  = (args.cameraSource == "none") || useEspnode;
 
     // ---- ESP32 node setup (discovery before SLAM init to fail fast) ----------
     ImuBuffer imuBuf;
@@ -147,23 +122,23 @@ int main(int argc, char** argv)
     if (useEspnode) {
         std::string espIp;
         // "espnode:<ip>" → use provided IP; "espnode" alone → auto-discover
-        if (cameraSource.size() > 8 && cameraSource[7] == ':')
-            espIp = cameraSource.substr(8);
-        espSrc = std::make_unique<EspnodeSource>(espIp, espnodeFps);
+        if (args.cameraSource.size() > 8 && args.cameraSource[7] == ':')
+            espIp = args.cameraSource.substr(8);
+        espSrc = std::make_unique<EspnodeSource>(espIp, args.espnodeFps);
         if (espSrc->discover().empty()) {
             std::cerr << "Failed to discover ESP32 node. Exiting.\n";
             return 1;
         }
         std::cout << "ESP32 node at " << espSrc->ip()
-                  << "  trigger fps=" << espnodeFps << "\n";
+                  << "  trigger fps=" << args.espnodeFps << "\n";
     }
 
     // ---- Camera open (skipped for espnode and 'none' modes) ------------------
     cv::VideoCapture cap;
     if (!useIngest) {
-        cap = openCamera(cameraSource);
+        cap = openCamera(args.cameraSource);
         if (!cap.isOpened()) {
-            std::cerr << "Failed to open camera: " << cameraSource << "\n";
+            std::cerr << "Failed to open camera: " << args.cameraSource << "\n";
             return 1;
         }
     } else if (!useEspnode) {
@@ -171,7 +146,7 @@ int main(int argc, char** argv)
     }
 
     std::cout << "Initializing ORB-SLAM3\n";
-    ORB_SLAM3::System slam(vocabPath, settingsPath, ORB_SLAM3::System::MONOCULAR, true);
+    ORB_SLAM3::System slam(args.vocabPath, args.settingsPath, ORB_SLAM3::System::MONOCULAR, true);
     ORB_SLAM3::Verbose::SetTh(ORB_SLAM3::Verbose::VERBOSITY_DEBUG);
     const float imageScale = slam.GetImageScale();
     std::cout << "Image scale: " << imageScale << "\n";
@@ -183,10 +158,10 @@ int main(int argc, char** argv)
     std::atomic<bool>  localizationMode{false};
     std::atomic<bool>  allowMapCreation{true};
 
-    if (startInLocMode) {
+    if (args.localizeOnly) {
         std::cout << "Activating localization mode\n";
         localizationMode = true;
-        slam.GetAtlas()->SwitchToMap(static_cast<unsigned int>(mapId));
+        slam.GetAtlas()->SwitchToMap(static_cast<unsigned int>(args.mapId));
         slam.ActivateLocalizationMode();
         slam.ForceRelocalization();
         // In localization-only startup, suppress map creation by default.
@@ -210,8 +185,9 @@ int main(int argc, char** argv)
 
     // Components
     CalibrationManager calib(slam);
-    WebServer          server(slam, flags, pose, calib, localizationMode, allowMapCreation, mapId,
-                              useIngest ? &ingestQueue : nullptr, staticFileRoot, port);
+    WebServer          server(slam, flags, pose, calib, localizationMode, allowMapCreation,
+                              args.mapId, useIngest ? &ingestQueue : nullptr,
+                              staticFileRoot, args.port);
 
     // Control thread: HTTP server + stdin commands
     std::thread controlThread([&]() {
@@ -232,7 +208,7 @@ int main(int argc, char** argv)
                     && FD_ISSET(STDIN_FILENO, &fds)) {
                     std::string cmd;
                     if (std::cin >> cmd)
-                        handleStdinCommand(cmd, slam, flags, localizationMode, allowMapCreation, mapId);
+                        handleStdinCommand(cmd, slam, flags, localizationMode, allowMapCreation, args.mapId);
                 }
             }
         });
