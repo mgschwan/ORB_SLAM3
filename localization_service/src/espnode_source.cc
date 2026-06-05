@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -192,6 +193,16 @@ void EspnodeSource::sessionLoop(IngestQueue& frameQueue, ImuBuffer& imuBuf) {
             continue;
         }
         std::cout << "ESP32 connected.\n";
+
+        // TCP keepalive: detect a dead connection (e.g. WiFi drop on the device)
+        // in ~14 seconds rather than waiting for the OS default (minutes).
+        {
+            int on = 1, idle = 5, intvl = 3, cnt = 3;
+            setsockopt(fd, SOL_SOCKET,  SO_KEEPALIVE,  &on,    sizeof(on));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE,  &idle,  sizeof(idle));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT,   &cnt,   sizeof(cnt));
+        }
 
         // Switch to a 5-second recv timeout so the RX thread wakes up
         // periodically to check running_ if no packets arrive.

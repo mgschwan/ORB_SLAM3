@@ -36,8 +36,8 @@
 // WiFi credentials
 // ===========================
 // Will be read from SD card if available, otherwise use these defaults
-String ssid = "";
-String password = "";
+String ssid = "orbslammer";
+String password = "12345678";
 
 
 #define TCP_PORT 11212
@@ -305,6 +305,34 @@ void loop() {
 
   handleSerial();
 
+  // ---- WiFi watchdog --------------------------------------------------------
+  // If WiFi drops, stop any active TCP client and attempt reconnection every 5 s.
+  // Once WiFi is back, restart the TCP server (it binds to the local IP).
+  static bool          wifiWasUp          = true;
+  static unsigned long lastReconnectMs    = 0;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wifiWasUp) {
+      Serial.println("WiFi connection lost.");
+      if (tcpClient && tcpClient.connected()) tcpClient.stop();
+      wifiWasUp = false;
+    }
+    unsigned long now = millis();
+    if (now - lastReconnectMs >= 5000) {
+      Serial.println("Reconnecting WiFi...");
+      WiFi.begin(ssid.c_str(), password.c_str());
+      lastReconnectMs = now;
+    }
+    delay(100);
+    return;
+  }
+  if (!wifiWasUp) {
+    Serial.printf("WiFi reconnected. IP: %s\n", WiFi.localIP().toString().c_str());
+    tcpServer.begin();  // rebind TCP server to the (possibly new) IP
+    wifiWasUp = true;
+  }
+  // ---- End WiFi watchdog ----------------------------------------------------
+
   // Check for new TCP clients
   if (tcpServer.hasClient()) {
     // If a client is already connected, disconnect it first
@@ -352,7 +380,8 @@ void loop() {
 
     if ( currentIMUFrameIndex > MAX_IMU_FRAMES -1 ) {
         currentIMUFrameIndex = 0;
-        Serial.println("IMU buffer overflow, resetting index.");
+
+        //Serial.println("IMU buffer overflow, resetting index.");
     }
 
     imuFramesBuffer[currentIMUFrameIndex*IMU_FRAME_SIZE] = fusion.roll();
@@ -364,29 +393,29 @@ void loop() {
     currentIMUFrameIndex++;
 
 
-    if ( loopIndex % 20 == 0 ) 
-    {
-        Serial.print("Roll: ");
-        Serial.print(fusion.roll());
-        Serial.print(" Pitch: ");
-        Serial.print(fusion.pitch());
-        Serial.print(" Yaw: ");
-        Serial.print(fusion.yaw());
+    // if ( loopIndex % 20 == 0 ) 
+    // {
+    //     Serial.print("Roll: ");
+    //     Serial.print(fusion.roll());
+    //     Serial.print(" Pitch: ");
+    //     Serial.print(fusion.pitch());
+    //     Serial.print(" Yaw: ");
+    //     Serial.print(fusion.yaw());
 
-        // Display vectors:
-        Serial.print( " vel = " );
-        printVector( vel );
-        Serial.print(" raw ");
-        Serial.print(imu.rawAx());
-        Serial.print(",");
-        Serial.print(imu.rawAy());
-        Serial.print(",");
-        Serial.print(imu.rawAz());
-        Serial.println();
+    //     // Display vectors:
+    //     Serial.print( " vel = " );
+    //     printVector( vel );
+    //     Serial.print(" raw ");
+    //     Serial.print(imu.rawAx());
+    //     Serial.print(",");
+    //     Serial.print(imu.rawAy());
+    //     Serial.print(",");
+    //     Serial.print(imu.rawAz());
+    //     Serial.println();
 
-    } 
+    // } 
 
-    if ( loopIndex % 100 == 0 ) {
+    if ( loopIndex % 1000 == 0 ) {
       Serial.print("Camera Ready! Use 'http://");
       Serial.print(WiFi.localIP());
       Serial.print("' to connect");
@@ -516,11 +545,9 @@ void setup() {
     }
   } else {
     Serial.println("No SD card or config file found, using default WiFi credentials.");
+    Serial.println(ssid);
+    Serial.println(password);
   }
-
-
-
-
 
   camera_config_t config;
 

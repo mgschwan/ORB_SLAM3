@@ -3452,7 +3452,7 @@ void Tracking::CreateNewKeyFrame(bool bForcedPose)
                     }
 
                     MapPoint* pNewMP = new MapPoint(x3D,pKF,mpAtlas->GetCurrentMap());
-                    pNewMP->mRgb = sampleBGR5x5(mCurrentFrame.mImColor, mCurrentFrame.mvKeysUn[i].pt);
+                    pNewMP->mRgb = sampleBGR(mCurrentFrame.mImColor, mCurrentFrame.mvKeysUn[i].pt);
                     pNewMP->AddObservation(pKF,i);
 
                     //Check if it is a stereo observation in order to not

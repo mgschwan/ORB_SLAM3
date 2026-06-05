@@ -208,8 +208,8 @@ public:
     unsigned int mnOriginMapId;
 
     // Per-point color sampled from the source image at creation time.
-    // Stored in BGR channel order (OpenCV convention). Zero-initialized.
-    cv::Vec3b mRgb{0, 0, 0};
+    // Stored in BGR channel order (OpenCV convention). 
+    cv::Vec3b mRgb{255, 255, 255};
 
 protected:    
 
