@@ -349,6 +349,9 @@ protected:
     int mMinFrames;
     int mMaxFrames;
 
+    // Minimum keypoint/match counts for monocular initialization (YAML: Tracking.minInitMatches)
+    int mMinInitMatches;
+
     int mnFirstImuFrameId;
     int mnFramesToResetIMU;
 

@@ -125,6 +125,7 @@ def main(fps=5):
                     np_arr = np.frombuffer(payload, np.uint8)
                     img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
                     if img is not None:
+                        print ("Frame size ",str(img.shape))
                         cv2.imshow('ESP32 Camera', img)
                         if cv2.waitKey(1) & 0xFF == ord('q'):
                             return

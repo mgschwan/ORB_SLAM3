@@ -30,6 +30,7 @@
 // ===================
 //#define CAMERA_MODEL_XIAO_ESP32S3 // Has PSRAM
 #define CAMERA_MODEL_ESP32S3_EYE // Has PSRAM
+#define CAM_MODULE_OV5640 1
 #include "camera_pins.h"
 
 // ===========================
@@ -323,7 +324,9 @@ void loop() {
       WiFi.begin(ssid.c_str(), password.c_str());
       lastReconnectMs = now;
     }
-    delay(100);
+    // Don't block with delay() here — returning immediately keeps loop()
+    // spinning so WiFi event callbacks (DHCP, state changes) are processed
+    // promptly even while the connection is down.
     return;
   }
   if (!wifiWasUp) {
@@ -457,7 +460,6 @@ void loop() {
   delay(5);
 }
 
-#define CAM_MODULE_OV5640 1
 
 void setup() {
   Serial.begin(115200);
@@ -571,7 +573,7 @@ void setup() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;   //20000000;
-  config.frame_size = FRAMESIZE_QVGA;   //FRAMESIZE_XGA;
+  config.frame_size = FRAMESIZE_VGA;   //FRAMESIZE_XGA;
   config.pixel_format = PIXFORMAT_JPEG;  // for streaming
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;

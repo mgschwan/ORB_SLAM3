@@ -480,6 +480,9 @@ namespace ORB_SLAM3 {
         bool found;
 
         thFarPoints_ = readParameter<float>(fSettings,"System.thFarPoints",found,false);
+        minInitMatches_ = readParameter<int>(fSettings,"Tracking.minInitMatches",found,false);
+        if(!found)
+            minInitMatches_ = 100;
     }
 
     void Settings::precomputeRectificationMaps() {

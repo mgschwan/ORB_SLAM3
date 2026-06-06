@@ -48,7 +48,8 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mbOnlyTracking(false), mbAllowMapCreation(true), mbMapUpdated(false), mbVO(false), mpORBVocabulary(pVoc), mpKeyFrameDB(pKFDB),
     mbReadyToInitializate(false), mpSystem(pSys), mpViewer(NULL), bStepByStep(false),
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0),
-    mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), mpLastKeyFrame(static_cast<KeyFrame*>(NULL))
+    mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), mpLastKeyFrame(static_cast<KeyFrame*>(NULL)),
+    mMinInitMatches(100)
 {
     // Load camera parameters from settings file
     if(settings){
@@ -586,6 +587,7 @@ void Tracking::newParameterLoader(Settings *settings) {
     mMinFrames = 0;
     mMaxFrames = settings->fps();
     mbRGB = settings->rgb();
+    mMinInitMatches = settings->minInitMatches();
 
     //ORB parameters
     int nFeatures = settings->nFeatures();
@@ -1211,6 +1213,13 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
     if(b_miss_params)
     {
         return false;
+    }
+
+    cv::FileNode nodeMinInit = fSettings["Tracking.minInitMatches"];
+    if(!nodeMinInit.empty() && nodeMinInit.isInt())
+    {
+        mMinInitMatches = nodeMinInit.operator int();
+        cout << "- Tracking.minInitMatches: " << mMinInitMatches << endl;
     }
 
     return true;
@@ -2505,7 +2514,7 @@ void Tracking::MonocularInitialization()
     if(!mbReadyToInitializate)
     {
         // Set Reference Frame
-        if(mCurrentFrame.mvKeys.size()>100)
+        if((int)mCurrentFrame.mvKeys.size()>mMinInitMatches)
         {
 
             mInitialFrame = Frame(mCurrentFrame);
@@ -2549,7 +2558,7 @@ void Tracking::MonocularInitialization()
     }
     else
     {
-        if (((int)mCurrentFrame.mvKeys.size()<=100)||((mSensor == System::IMU_MONOCULAR)&&(mLastFrame.mTimeStamp-mInitialFrame.mTimeStamp>1.0)))
+        if (((int)mCurrentFrame.mvKeys.size()<=mMinInitMatches)||((mSensor == System::IMU_MONOCULAR)&&(mLastFrame.mTimeStamp-mInitialFrame.mTimeStamp>1.0)))
         {
             cout << "Monocular Tracking tried to initialize but not enough keypoints" << endl;
 
@@ -2562,7 +2571,7 @@ void Tracking::MonocularInitialization()
         ORBmatcher matcher(0.9,true);
         int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
-        int correspondeceCountThreshold = 100;
+        int correspondeceCountThreshold = mMinInitMatches;
         if ( mbInitialFrameHasForcedPose && mbHasForcedPose )
         {
             // With two externally provided poses, we can be more lenient on the number of matches.
@@ -2718,7 +2727,7 @@ void Tracking::CreateInitialMapMonocular()
     else
         invMedianDepth = 1.0f/medianDepth;
 
-    if(medianDepth<0 || pKFcur->TrackedMapPoints(1)<50) // TODO Check, originally 100 tracks
+    if(medianDepth<0 || pKFcur->TrackedMapPoints(1)<mMinInitMatches/2)
     {
         cout << "Wrong initialization, reseting..."
              << " (medianDepth=" << medianDepth

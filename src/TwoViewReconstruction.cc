@@ -134,17 +134,21 @@ namespace ORB_SLAM3
              << "  inliersH=" << nInliersH << " inliersF=" << nInliersF << endl;
 
         float minParallax = 1.0;
+        // Scale the minimum triangulated point count with the number of matches so
+        // small-resolution cameras (few keypoints) can still initialize.  The floor
+        // of 10 prevents degenerate maps from near-zero match counts.
+        int minTriangulated = max(static_cast<int>(0.5 * N), 10);
 
         // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
         if(RH>0.50) // if(RH>0.40)
         {
             cout << "[TVR] -> Homography path (RH=" << RH << " > 0.50)" << endl;
-            return ReconstructH(vbMatchesInliersH,H, mK,T21,vP3D,vbTriangulated,minParallax,50);
+            return ReconstructH(vbMatchesInliersH,H, mK,T21,vP3D,vbTriangulated,minParallax,minTriangulated);
         }
         else //if(pF_HF>0.6)
         {
             cout << "[TVR] -> Fundamental path (RH=" << RH << " <= 0.50)" << endl;
-            return ReconstructF(vbMatchesInliersF,F,mK,T21,vP3D,vbTriangulated,minParallax,50);
+            return ReconstructF(vbMatchesInliersF,F,mK,T21,vP3D,vbTriangulated,minParallax,minTriangulated);
         }
     }
 

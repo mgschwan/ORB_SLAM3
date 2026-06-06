@@ -18,7 +18,8 @@ mergeMinSim3Inliers:   20
 mergeMinProjMatches:   50
 mergeMinProjOptMatches: 80
 
-Camera.type: "KannalaBrandt8"
+#Camera.type: "KannalaBrandt8"
+Camera.type: "PinHole"
 
 # Camera calibration and distortion parameters (OpenCV) 
 Camera1.fx: 867.20
@@ -31,6 +32,8 @@ Camera1.k1: 0.0
 Camera1.k2: 0.0
 Camera1.k3: 0.0
 Camera1.k4: 0.0
+Camera1.p1: 0.0
+Camera1.p2: 0.0
     
 # Camera resolution
 Camera.width: 1280
@@ -43,6 +46,15 @@ Camera.fps: 20
 
 # Color order of the images (0: BGR, 1: RGB. It is ignored if images are grayscale)
 Camera.RGB: 1
+
+#--------------------------------------------------------------------------------------------
+# Tracking Parameters
+#--------------------------------------------------------------------------------------------
+
+# Minimum number of keypoints/matches required for monocular initialization.
+# Default is 100 (suitable for HD cameras). Reduce for low-resolution cameras
+# (e.g. ESP32-CAM at 320x240) where fewer keypoints are available overall.
+Tracking.minInitMatches: 50
 
 #--------------------------------------------------------------------------------------------
 # ORB Parameters
