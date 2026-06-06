@@ -4178,28 +4178,41 @@ void Tracking::ChangeCalibration(const string &strSettingPath)
     Frame::mbInitialComputations = true;
 }
 
-void Tracking::ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef)
+void Tracking::ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef,
+                                  unsigned int cameraType)
 {
     K.copyTo(mK);
-    
+
     mK_.setIdentity();
-    mK_(0,0) = K.at<double>(0,0); // calibrateCamera returns double precision
+    mK_(0,0) = K.at<double>(0,0);
     mK_(1,1) = K.at<double>(1,1);
     mK_(0,2) = K.at<double>(0,2);
     mK_(1,2) = K.at<double>(1,2);
 
-    cv::Mat DistCoefFloat;
-    DistCoef.convertTo(DistCoefFloat, CV_32F);
-    DistCoefFloat.copyTo(mDistCoef);
-
-    // Update the camera pointer
     vector<float> vCamCalib{
-        (float)K.at<double>(0,0), 
-        (float)K.at<double>(1,1), 
-        (float)K.at<double>(0,2), 
+        (float)K.at<double>(0,0),
+        (float)K.at<double>(1,1),
+        (float)K.at<double>(0,2),
         (float)K.at<double>(1,2)
     };
-    mpCamera = new Pinhole(vCamCalib);
+
+    if (cameraType == GeometricCamera::CAM_FISHEYE) {
+        // KannalaBrandt8: distortion is encoded as params 4-7 in the camera object.
+        // DistCoef must contain 4 equidistant fisheye coefficients: k1, k2, k3, k4.
+        // mDistCoef stays zeros — UndistortKeyPoints skips its pinhole path for fisheye.
+        const int nCoeffs = std::min((int)DistCoef.total(), 4);
+        for (int i = 0; i < nCoeffs; ++i)
+            vCamCalib.push_back((float)DistCoef.at<double>(i));
+        while ((int)vCamCalib.size() < 8)
+            vCamCalib.push_back(0.f);
+        mpCamera = new KannalaBrandt8(vCamCalib);
+        mDistCoef = cv::Mat::zeros(4, 1, CV_32F);
+    } else {
+        cv::Mat DistCoefFloat;
+        DistCoef.convertTo(DistCoefFloat, CV_32F);
+        DistCoefFloat.copyTo(mDistCoef);
+        mpCamera = new Pinhole(vCamCalib);
+    }
     mpCamera = mpAtlas->AddCamera(mpCamera);
 
     Frame::mbInitialComputations = true;

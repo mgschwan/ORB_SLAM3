@@ -47,15 +47,21 @@ public:
     Status  getStatus()     const;
     cv::Mat getLatestImage() const; // returns a clone; empty if none yet
 
-    // Runs cv::calibrateCamera on accumulated captures.
+    // Runs calibration on accumulated captures.
+    // model: "Pinhole" (default) or "KannalaBrandt8" — selects the calibration algorithm
+    //        and camera object type passed to SLAM.
     // On success, calls SLAM.ChangeCalibration() and resets internal state.
     // Returns a JSON string ready to send as an HTTP response body.
-    std::string computeJson();
+    std::string computeJson(const std::string& model = "Pinhole");
 
     // Applies manually supplied intrinsics directly to SLAM.
+    // model: "Pinhole" (default) or "KannalaBrandt8"
+    // For Pinhole: k1,k2,p1,p2,k3 are polynomial radial/tangential distortion coefficients.
+    // For KannalaBrandt8: k1,k2,p1,p2 are the four equidistant fisheye coefficients; k3 unused.
     // Returns a JSON confirmation string.
     std::string applyManualJson(double fx, double fy, double cx, double cy,
-                                double k1, double k2, double p1, double p2, double k3);
+                                double k1, double k2, double p1, double p2, double k3,
+                                const std::string& model = "Pinhole");
 
 private:
     void doCapture(const cv::Mat& frame); // called with mtx_ held

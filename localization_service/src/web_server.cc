@@ -214,14 +214,18 @@ bool WebServer::routeCalibrate(const std::string& req, int fd,
                        "Connection: close\r\n\r\n" + data;
         }
     } else if (req.find("GET /api/calibrate/compute") != std::string::npos) {
-        response = makeOkJson(calib_.computeJson());
+        std::string model = queryParam(req, "model");
+        if (model.empty()) model = "Pinhole";
+        response = makeOkJson(calib_.computeJson(model));
     } else if (req.find("GET /api/calibrate/apply") != std::string::npos) {
+        std::string model = queryParam(req, "model");
+        if (model.empty()) model = "Pinhole";
         response = makeOkJson(calib_.applyManualJson(
             queryDouble(req, "fx"), queryDouble(req, "fy"),
             queryDouble(req, "cx"), queryDouble(req, "cy"),
             queryDouble(req, "k1"), queryDouble(req, "k2"),
             queryDouble(req, "p1"), queryDouble(req, "p2"),
-            queryDouble(req, "k3")));
+            queryDouble(req, "k3"), model));
     } else {
         return false; // unknown /api/calibrate/ sub-path
     }

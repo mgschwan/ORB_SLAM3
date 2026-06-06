@@ -1455,10 +1455,16 @@ bool System::isFinished()
     return (GetTimeFromIMUInit()>0.1);
 }
 
-void System::ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef)
+void System::ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef,
+                               unsigned int cameraType)
 {
     unique_lock<mutex> lock(mMutexMode);
-    mpTracker->ChangeCalibration(K, DistCoef);
+    mpTracker->ChangeCalibration(K, DistCoef, cameraType);
+}
+
+unsigned int System::GetCameraType()
+{
+    return mpTracker->GetCameraType();
 }
 
 void System::ChangeDataset()

@@ -91,7 +91,7 @@ cv::Mat CalibrationManager::getLatestImage() const
     return latestImage_.empty() ? cv::Mat{} : latestImage_.clone();
 }
 
-std::string CalibrationManager::computeJson()
+std::string CalibrationManager::computeJson(const std::string& model)
 {
     std::vector<std::vector<cv::Point2f>> imgPts;
     std::vector<std::vector<cv::Point3f>> objPts;
@@ -108,13 +108,35 @@ std::string CalibrationManager::computeJson()
     if (imgPts.size() < 3 || imgSize.width == 0)
         return "{\"success\":false,\"error\":\"not enough captures\"}";
 
-    cv::Mat K  = cv::Mat::eye(3, 3, CV_64F);
-    cv::Mat D  = cv::Mat::zeros(8, 1, CV_64F);
+    cv::Mat K = cv::Mat::eye(3, 3, CV_64F);
     std::vector<cv::Mat> rvecs, tvecs;
-    const double rms = cv::calibrateCamera(objPts, imgPts, imgSize, K, D, rvecs, tvecs);
-    std::cout << "Calibration completed with RMS error: " << rms << std::endl;
+    double rms;
+    std::string distJson;
 
-    slam_.ChangeCalibration(K, D);
+    const bool isFisheye = (model == "KannalaBrandt8");
+
+    if (isFisheye) {
+        // KannalaBrandt8: equidistant fisheye model with 4 distortion coefficients.
+        cv::Mat D = cv::Mat::zeros(4, 1, CV_64F);
+        rms = cv::fisheye::calibrate(objPts, imgPts, imgSize, K, D, rvecs, tvecs,
+            cv::fisheye::CALIB_RECOMPUTE_EXTRINSIC | cv::fisheye::CALIB_FIX_SKEW);
+        std::cout << "Fisheye calibration completed with RMS error: " << rms << std::endl;
+        slam_.ChangeCalibration(K, D, 1 /*CAM_FISHEYE*/);
+        distJson = std::string(",\"k1\":") + std::to_string(D.at<double>(0))
+                 + ",\"k2\":"              + std::to_string(D.at<double>(1))
+                 + ",\"k3\":"              + std::to_string(D.at<double>(2))
+                 + ",\"k4\":"              + std::to_string(D.at<double>(3));
+    } else {
+        cv::Mat D = cv::Mat::zeros(8, 1, CV_64F);
+        rms = cv::calibrateCamera(objPts, imgPts, imgSize, K, D, rvecs, tvecs);
+        std::cout << "Pinhole calibration completed with RMS error: " << rms << std::endl;
+        slam_.ChangeCalibration(K, D, 0 /*CAM_PINHOLE*/);
+        distJson = std::string(",\"k1\":") + std::to_string(D.at<double>(0))
+                 + ",\"k2\":"              + std::to_string(D.at<double>(1))
+                 + ",\"p1\":"              + std::to_string(D.at<double>(2))
+                 + ",\"p2\":"              + std::to_string(D.at<double>(3))
+                 + ",\"k3\":"              + std::to_string(D.at<double>(4));
+    }
 
     {
         std::lock_guard<std::mutex> lock(mtx_);
@@ -125,22 +147,20 @@ std::string CalibrationManager::computeJson()
     }
 
     return std::string("{\"success\":true")
-        + ",\"fx\":"  + std::to_string(K.at<double>(0,0))
-        + ",\"fy\":"  + std::to_string(K.at<double>(1,1))
-        + ",\"cx\":"  + std::to_string(K.at<double>(0,2))
-        + ",\"cy\":"  + std::to_string(K.at<double>(1,2))
-        + ",\"k1\":"  + std::to_string(D.at<double>(0))
-        + ",\"k2\":"  + std::to_string(D.at<double>(1))
-        + ",\"p1\":"  + std::to_string(D.at<double>(2))
-        + ",\"p2\":"  + std::to_string(D.at<double>(3))
-        + ",\"k3\":"  + std::to_string(D.at<double>(4))
+        + ",\"model\":"   + (isFisheye ? "\"KannalaBrandt8\"" : "\"Pinhole\"")
+        + ",\"fx\":"      + std::to_string(K.at<double>(0,0))
+        + ",\"fy\":"      + std::to_string(K.at<double>(1,1))
+        + ",\"cx\":"      + std::to_string(K.at<double>(0,2))
+        + ",\"cy\":"      + std::to_string(K.at<double>(1,2))
+        + distJson
         + "}";
 }
 
 std::string CalibrationManager::applyManualJson(double fx, double fy,
                                                  double cx, double cy,
                                                  double k1, double k2,
-                                                 double p1, double p2, double k3)
+                                                 double p1, double p2, double k3,
+                                                 const std::string& model)
 {
     cv::Mat K = cv::Mat::eye(3, 3, CV_64F);
     K.at<double>(0,0) = fx;
@@ -148,16 +168,29 @@ std::string CalibrationManager::applyManualJson(double fx, double fy,
     K.at<double>(0,2) = cx;
     K.at<double>(1,2) = cy;
 
-    cv::Mat D = cv::Mat::zeros(5, 1, CV_64F);
-    D.at<double>(0) = k1;
-    D.at<double>(1) = k2;
-    D.at<double>(2) = p1;
-    D.at<double>(3) = p2;
-    D.at<double>(4) = k3;
+    cv::Mat D;
+    const bool isFisheye = (model == "KannalaBrandt8");
+    if (isFisheye) {
+        // KannalaBrandt8: k1,k2,p1,p2 are the four equidistant fisheye coefficients; k3 unused.
+        D = cv::Mat::zeros(4, 1, CV_64F);
+        D.at<double>(0) = k1;
+        D.at<double>(1) = k2;
+        D.at<double>(2) = p1;
+        D.at<double>(3) = p2;
+        slam_.ChangeCalibration(K, D, 1 /*CAM_FISHEYE*/);
+    } else {
+        D = cv::Mat::zeros(5, 1, CV_64F);
+        D.at<double>(0) = k1;
+        D.at<double>(1) = k2;
+        D.at<double>(2) = p1;
+        D.at<double>(3) = p2;
+        D.at<double>(4) = k3;
+        slam_.ChangeCalibration(K, D, 0 /*CAM_PINHOLE*/);
+    }
 
-    slam_.ChangeCalibration(K, D);
-    std::cout << ">>> [Web] Applied manual calibration from URL parameters <<<" << std::endl;
-    return "{\"success\":true}";
+    std::cout << ">>> [Web] Applied manual " << model
+              << " calibration from URL parameters <<<" << std::endl;
+    return std::string("{\"success\":true,\"model\":\"") + model + "\"}";
 }
 
 } // namespace localization_service

@@ -84,7 +84,10 @@ public:
     // Load new settings
     // The focal lenght should be similar or scale prediction will fail when projecting points
     void ChangeCalibration(const string &strSettingPath);
-    void ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef);
+    // cameraType: GeometricCamera::CAM_PINHOLE (0) or GeometricCamera::CAM_FISHEYE (1)
+    void ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef,
+                           unsigned int cameraType = GeometricCamera::CAM_PINHOLE);
+    unsigned int GetCameraType() { return mpCamera ? mpCamera->GetType() : GeometricCamera::CAM_PINHOLE; }
 
     // Use this function if you have deactivated local mapping and you only want to localize the camera.
     void InformOnlyTracking(const bool &flag);

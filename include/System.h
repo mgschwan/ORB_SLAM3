@@ -140,7 +140,12 @@ public:
     void Shutdown();
     bool isShutDown();
 
-    void ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef);
+    // cameraType: GeometricCamera::CAM_PINHOLE (0) or GeometricCamera::CAM_FISHEYE (1)
+    void ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef,
+                           unsigned int cameraType = 0);
+
+    // Returns GeometricCamera::CAM_PINHOLE (0) or GeometricCamera::CAM_FISHEYE (1).
+    unsigned int GetCameraType();
 
     // Save camera trajectory in the TUM RGB-D dataset format.
     // Only for stereo and RGB-D. This method does not work for monocular.

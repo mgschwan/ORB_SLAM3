@@ -4,9 +4,101 @@
     <title>ORB-SLAM3 Camera Calibration</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: sans-serif; margin: 40px; background: #f5f5f5; text-align: center; }
-        .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 95vw; margin: auto; }
-        .btn { padding: 10px 20px; margin: 5px; text-decoration: none; border: 1px solid #ccc; border-radius: 4px; display: inline-block; color: #333; font-weight: bold; transition: 0.3s; cursor: pointer; background: #fff; }
+        *, *::before, *::after { box-sizing: border-box; }
+        body { font-family: sans-serif; margin: 0; padding: 12px; background: #f5f5f5; }
+
+        .page-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-width: 1400px;
+            margin: auto;
+        }
+
+        /* ── Landscape: side-by-side ── */
+        @media (orientation: landscape) and (min-width: 700px) {
+            .page-layout {
+                flex-direction: row;
+                align-items: flex-start;
+                height: calc(100vh - 24px);
+            }
+            .panel-pattern {
+                flex: 0 0 auto;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                height: 100%;
+            }
+            .panel-controls {
+                flex: 1 1 0;
+                height: 100%;
+                overflow-y: auto;
+            }
+            /* Size squares to fill viewport height */
+            .square { width: calc((100vh - 80px) / 7); height: calc((100vh - 80px) / 7); }
+            .checkerboard-grid {
+                grid-template-columns: repeat(10, calc((100vh - 80px) / 7));
+                grid-template-rows:    repeat(7,  calc((100vh - 80px) / 7));
+            }
+            .pattern-toggle { display: none; }
+            #pattern-wrap { display: block !important; }
+        }
+
+        /* ── Portrait: stacked, pattern collapsible ── */
+        @media not ((orientation: landscape) and (min-width: 700px)) {
+            .square { width: calc(min(90vw, 60vh) / 10); height: calc(min(90vw, 60vh) / 10); }
+            .checkerboard-grid {
+                grid-template-columns: repeat(10, calc(min(90vw, 60vh) / 10));
+                grid-template-rows:    repeat(7,  calc(min(90vw, 60vh) / 10));
+            }
+        }
+
+        /* ── Panels ── */
+        .panel-pattern {
+            background: #fff;
+            border-radius: 8px;
+            padding: 12px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+        .panel-controls {
+            background: #fff;
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+
+        /* ── Checkerboard ── */
+        .checkerboard-grid {
+            display: grid;
+            border: 8px solid #fff;
+            background: #fff;
+        }
+        .black { background: #000; }
+        .white { background: #fff; }
+
+        .pattern-toggle { font-size: 0.9em; color: #007bff; cursor: pointer; text-decoration: underline; margin-bottom: 6px; display: inline-block; }
+        .pattern-hint { margin: 6px 0 0 0; font-size: 0.8em; color: #6c757d; text-align: center; }
+
+        /* ── Controls ── */
+        h2 { margin: 0 0 12px 0; font-size: 1.3em; }
+
+        .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .status-badge { font-size: 0.9em; padding: 5px 12px; border-radius: 20px; background: #e9ecef; }
+
+        .field-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+        .field-row label { font-weight: bold; white-space: nowrap; }
+        .field-row input[type="number"], .field-row input[type="text"] { padding: 7px 9px; border: 1px solid #ccc; border-radius: 4px; width: 110px; }
+
+        .model-selector { display: flex; gap: 10px; flex-wrap: wrap; }
+        .model-option { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 6px 14px; border: 2px solid #ccc; border-radius: 6px; transition: 0.2s; white-space: nowrap; }
+        .model-option:has(input:checked) { border-color: #007bff; background: #e8f0fe; }
+        .model-option input { cursor: pointer; }
+
+        .action-row { display: flex; align-items: center; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+        .capture-count { font-size: 1.3em; font-weight: bold; color: #007bff; }
+
+        .btn { padding: 10px 20px; border: 1px solid #ccc; border-radius: 4px; color: #333; font-weight: bold; transition: 0.2s; cursor: pointer; background: #fff; white-space: nowrap; }
         .btn:hover { background: #e0e0e0; }
         .btn-primary { background: #007bff; color: white; border-color: #007bff; }
         .btn-primary:hover { background: #0056b3; }
@@ -16,185 +108,277 @@
         .btn-warning:hover { background: #e0a800; }
         .btn-danger { background: #dc3545; color: white; border-color: #dc3545; }
         .btn-danger:hover { background: #c82333; }
-        
-        .preview-container { margin: 20px auto; border: 2px solid #ddd; min-height: 300px; max-width: 640px; display: flex; align-items: center; justify-content: center; background: #eee; }
-        .preview-container img { max-width: 100%; max-height: 480px; }
-        
-        .checkerboard-grid {
-            display: grid;
-            grid-template-columns: repeat(10, 6vw);
-            grid-template-rows: repeat(7, 6vw);
-            width: fit-content;
-            margin: 0 auto 20px auto;
-            border: 10px solid #fff;
-            background-color: #fff;
-        }
-        .square { width: 6vw; height: 6vw; }
-        .black { background-color: #000; }
-        .white { background-color: #fff; }
+        .btn-lg { padding: 13px 28px; font-size: 1.05em; }
 
-        .input-group { margin: 15px 0; }
-        .input-group label { font-weight: bold; margin-right: 10px; }
-        .input-group input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: 100px; }
+        /* ── Manual entry ── */
+        .manual-section { margin-top: 14px; padding: 12px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; }
+        .manual-section summary { cursor: pointer; font-weight: bold; }
+        .param-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-top: 10px; }
+        .param-item { display: flex; flex-direction: column; gap: 3px; }
+        .param-item label { font-size: 0.82em; font-weight: bold; color: #495057; }
+        .param-item input { padding: 5px 7px; border: 1px solid #ccc; border-radius: 4px; }
+        .param-item.hidden { display: none; }
+        .model-note { font-size: 0.82em; color: #6c757d; margin: 8px 0 0 0; }
+
+        /* ── Modal ── */
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; align-items: center; justify-content: center; }
+        .modal-overlay.open { display: flex; }
+        .modal { background: #fff; border-radius: 10px; padding: 20px; max-width: 680px; width: 95vw; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.3); text-align: center; }
+        .modal h3 { margin: 0 0 12px 0; }
+        .modal img { max-width: 100%; max-height: 55vh; border: 1px solid #ddd; border-radius: 4px; }
+        .modal-status { margin: 10px 0; font-size: 1em; font-weight: bold; }
+        .modal-actions { margin-top: 14px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h2>Camera Calibration</h2>
-        
-        <details style="background:#fff3cd; color:#856404; padding:10px; border-radius:4px; margin-bottom:10px; text-align:left;">
-            <summary style="cursor:pointer; font-weight:bold;">View Instructions</summary>
-            <ol style="margin-top:10px;">
-                <li>Enter the physical size of your checkerboard squares in meters.</li>
-                <li>Point your camera at a printed checkerboard (9x6 internal corners). Or point it at the pattern below if your monitor is flat.</li>
-                <li>Click <b>"Capture Frame"</b>. Ensure the corners are detected properly in the preview image.</li>
-                <li>Repeat from different angles and distances until you have at least 15-20 good captures.</li>
-                <li>Click <b>"Compute & Apply Calibration"</b>.</li>
-            </ol>
-        </details>
+    <div class="page-layout">
 
-        <div id="pattern" class="checkerboard-grid"></div>
-
-        <div class="input-group">
-            <label for="calibName">Calibration Name:</label>
-            <input type="text" id="calibName" placeholder="e.g. My Webcam">
+        <!-- Left/top: calibration pattern -->
+        <div class="panel-pattern">
+            <span class="pattern-toggle" onclick="togglePattern()">&#9660; Show calibration pattern</span>
+            <div id="pattern-wrap" style="display:none;">
+                <div id="pattern" class="checkerboard-grid"></div>
+                <p class="pattern-hint">9×6 internal corners (10×7 squares)</p>
+            </div>
         </div>
 
-        <div class="input-group">
-            <label for="squareSize">Square Size (meters):</label>
-            <input type="number" id="squareSize" value="0.025" step="0.001" min="0.001">
+        <!-- Right/bottom: controls -->
+        <div class="panel-controls">
+            <h2>Camera Calibration</h2>
+
+            <div class="status-row">
+                <span class="status-badge">Status: <span id="status-text" style="color:#6c757d;">Waiting…</span></span>
+            </div>
+
+            <details style="background:#fff3cd; color:#856404; padding:10px; border-radius:4px; margin-bottom:12px;">
+                <summary style="cursor:pointer; font-weight:bold;">Instructions</summary>
+                <ol style="margin:8px 0 0 0; text-align:left;">
+                    <li>Select camera model matching your YAML.</li>
+                    <li>Enter the physical square size in meters.</li>
+                    <li>Point camera at the checkerboard pattern.</li>
+                    <li>Click <b>Capture Frame</b> — a preview confirms corner detection.</li>
+                    <li>Repeat 15–20× from varied angles and distances.</li>
+                    <li>Click <b>Compute &amp; Apply</b>.</li>
+                </ol>
+            </details>
+
+            <div class="field-row">
+                <label>Camera Model:</label>
+                <div class="model-selector">
+                    <label class="model-option">
+                        <input type="radio" name="cameraModel" value="Pinhole" checked onchange="onModelChange()">
+                        Pinhole
+                    </label>
+                    <label class="model-option">
+                        <input type="radio" name="cameraModel" value="KannalaBrandt8" onchange="onModelChange()">
+                        KannalaBrandt8 (fisheye)
+                    </label>
+                </div>
+            </div>
+
+            <div class="field-row">
+                <label for="squareSize">Square size (m):</label>
+                <input type="number" id="squareSize" value="0.025" step="0.001" min="0.001">
+            </div>
+
+            <div class="action-row">
+                <button class="btn btn-primary btn-lg" onclick="captureFrame()">&#128247; Capture Frame</button>
+                <span>Frames: <span class="capture-count" id="count-text">0</span></span>
+                <button class="btn btn-success btn-lg" onclick="computeCalibration()">&#10003; Compute &amp; Apply</button>
+            </div>
+
+            <hr style="margin: 16px 0;">
+
+            <details class="manual-section">
+                <summary>Manual Parameter Entry</summary>
+                <div id="model-note" class="model-note"></div>
+                <div class="param-grid">
+                    <div class="param-item"><label>fx</label><input type="number" id="m_fx" value="600" step="0.1"></div>
+                    <div class="param-item"><label>fy</label><input type="number" id="m_fy" value="600" step="0.1"></div>
+                    <div class="param-item"><label>cx</label><input type="number" id="m_cx" value="320" step="0.1"></div>
+                    <div class="param-item"><label>cy</label><input type="number" id="m_cy" value="240" step="0.1"></div>
+                    <div class="param-item"><label>k1</label><input type="number" id="m_k1" value="0" step="0.0001"></div>
+                    <div class="param-item"><label>k2</label><input type="number" id="m_k2" value="0" step="0.0001"></div>
+                    <div class="param-item"><label id="p1_label">p1</label><input type="number" id="m_p1" value="0" step="0.0001"></div>
+                    <div class="param-item"><label id="p2_label">p2</label><input type="number" id="m_p2" value="0" step="0.0001"></div>
+                    <div class="param-item" id="p_k3"><label>k3</label><input type="number" id="m_k3" value="0" step="0.0001"></div>
+                </div>
+                <button class="btn btn-warning" style="margin-top:12px;" onclick="applyManual()">Apply Manual Parameters</button>
+            </details>
+
+            <div style="margin-top:16px;">
+                <button class="btn btn-danger" onclick="exitCalibration()">Exit Calibration Mode</button>
+            </div>
         </div>
+    </div>
 
-        <div style="margin-top: 20px;">
-            <button class="btn btn-primary" onclick="captureFrame()">Capture Frame</button>
-            <button class="btn btn-success" onclick="computeCalibration()">Compute & Apply Calibration</button>
-        </div>
-
-        <hr>
-
-        <h3>Status: <span id="status-text" style="color: #6c757d;">Waiting...</span></h3>
-        <h4>Captured Frames: <span id="count-text" style="color: #007bff; font-size: 1.2em;">0</span></h4>
-
-        <div class="preview-container">
-            <img id="preview-image" src="" alt="Last Captured Frame" style="display: none;">
-            <span id="preview-placeholder">No frames captured yet</span>
-        </div>
-
-        <div style="margin-top:30px;">
-            <button class="btn btn-danger" onclick="exitCalibration()">Exit Calibration Mode</button>
+    <!-- Capture preview modal -->
+    <div class="modal-overlay" id="modal" onclick="closeModalOnOverlay(event)">
+        <div class="modal">
+            <h3>Captured Frame Preview</h3>
+            <img id="modal-img" src="" alt="Captured frame">
+            <div class="modal-status" id="modal-status"></div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="captureFrame(); closeModal();">Capture Again</button>
+                <button class="btn" onclick="closeModal()">Close</button>
+            </div>
         </div>
     </div>
 
     <script>
-        // Generate the 10x7 checkerboard grid (9x6 internal corners)
-        const pattern = document.getElementById('pattern');
-        for (let r = 0; r < 7; r++) {
+        // Build checkerboard
+        const patternEl = document.getElementById('pattern');
+        for (let r = 0; r < 7; r++)
             for (let c = 0; c < 10; c++) {
                 const sq = document.createElement('div');
                 sq.className = 'square ' + ((r + c) % 2 === 0 ? 'white' : 'black');
-                pattern.appendChild(sq);
+                patternEl.appendChild(sq);
+            }
+
+        // Auto-show pattern on landscape, hide on portrait
+        function syncPatternVisibility() {
+            const landscape = window.matchMedia('(orientation: landscape) and (min-width: 700px)').matches;
+            const wrap = document.getElementById('pattern-wrap');
+            const toggle = document.querySelector('.pattern-toggle');
+            if (landscape) {
+                wrap.style.display = 'block';
+                toggle.style.display = 'none';
+            } else {
+                // leave it in whatever state the user set, just show the toggle
+                toggle.style.display = 'inline-block';
             }
         }
+        window.addEventListener('resize', syncPatternVisibility);
+        syncPatternVisibility();
+
+        function togglePattern() {
+            const wrap = document.getElementById('pattern-wrap');
+            const toggle = document.querySelector('.pattern-toggle');
+            const visible = wrap.style.display !== 'none';
+            wrap.style.display = visible ? 'none' : 'block';
+            toggle.textContent = (visible ? '▼ Show' : '▲ Hide') + ' calibration pattern';
+        }
+
+        function selectedModel() {
+            return document.querySelector('input[name="cameraModel"]:checked').value;
+        }
+
+        function onModelChange() {
+            const isFisheye = selectedModel() === 'KannalaBrandt8';
+            document.getElementById('model-note').textContent = isFisheye
+                ? 'KannalaBrandt8: fx, fy, cx, cy + equidistant fisheye k1–k4 (uses cv::fisheye::calibrate).'
+                : 'Pinhole: fx, fy, cx, cy + radial/tangential k1, k2, p1, p2, k3.';
+            document.getElementById('p1_label').textContent = isFisheye ? 'k3' : 'p1';
+            document.getElementById('p2_label').textContent = isFisheye ? 'k4' : 'p2';
+            document.getElementById('p_k3').classList.toggle('hidden', isFisheye);
+        }
+
+        function setStatus(msg, color) {
+            const el = document.getElementById('status-text');
+            el.textContent = msg;
+            el.style.color = color || '#6c757d';
+        }
+
+        function openModal()  { document.getElementById('modal').classList.add('open'); }
+        function closeModal() { document.getElementById('modal').classList.remove('open'); }
+        function closeModalOnOverlay(e) { if (e.target === document.getElementById('modal')) closeModal(); }
 
         // Enter calibration mode on load
         fetch('/api/calibrate/mode?enable=true').then(() => {
-            document.getElementById('status-text').textContent = 'Calibration Mode Active';
-            document.getElementById('status-text').style.color = '#28a745';
+            setStatus('Calibration Mode Active', '#28a745');
             pollStatus();
         });
+        onModelChange();
 
         async function pollStatus() {
             try {
-                const response = await fetch('/api/calibrate/status');
-                const data = await response.json();
+                const data = await fetch('/api/calibrate/status').then(r => r.json());
                 document.getElementById('count-text').textContent = data.count;
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) {}
             setTimeout(pollStatus, 1000);
         }
 
         async function captureFrame() {
             const size = document.getElementById('squareSize').value;
-            document.getElementById('status-text').textContent = 'Capturing...';
-            
+            setStatus('Capturing…', '#ffc107');
             try {
                 await fetch('/api/calibrate/capture?size=' + size);
-                
-                // Wait briefly for backend to process image
-                setTimeout(updatePreview, 500);
+                setTimeout(showCaptureModal, 400);
             } catch (e) {
                 alert('Failed to capture frame');
             }
         }
 
-        async function updatePreview() {
-            // Force browser to ignore cache for the image
-            const timestamp = new Date().getTime();
-            const img = document.getElementById('preview-image');
-            const placeholder = document.getElementById('preview-placeholder');
-            
-            img.src = '/api/calibrate/image?t=' + timestamp;
-            img.onload = () => {
-                img.style.display = 'block';
-                placeholder.style.display = 'none';
-                
-                // Fetch status to see if it was successful
-                fetch('/api/calibrate/status').then(r => r.json()).then(data => {
-                    const statusText = document.getElementById('status-text');
+        async function showCaptureModal() {
+            const img = document.getElementById('modal-img');
+            const statusEl = document.getElementById('modal-status');
+            img.src = '/api/calibrate/image?t=' + Date.now();
+            statusEl.textContent = 'Loading…';
+            statusEl.style.color = '#6c757d';
+            openModal();
+            img.onload = async () => {
+                try {
+                    const data = await fetch('/api/calibrate/status').then(r => r.json());
+                    document.getElementById('count-text').textContent = data.count;
                     if (data.last_success) {
-                        statusText.textContent = 'Corners Detected Successfully!';
-                        statusText.style.color = '#28a745';
+                        statusEl.textContent = '✓ Corners detected — frame accepted';
+                        statusEl.style.color = '#28a745';
+                        setStatus('Frame ' + data.count + ' captured', '#28a745');
                     } else {
-                        statusText.textContent = 'Failed to find 9x6 corners. Try again.';
-                        statusText.style.color = '#dc3545';
+                        statusEl.textContent = '✗ Corners not found — adjust angle and try again';
+                        statusEl.style.color = '#dc3545';
+                        setStatus('Corner detection failed', '#dc3545');
                     }
-                });
+                } catch (e) {}
             };
             img.onerror = () => {
-                img.style.display = 'none';
-                placeholder.style.display = 'block';
-                placeholder.textContent = 'Image failed to load';
+                statusEl.textContent = 'Could not load image';
+                statusEl.style.color = '#dc3545';
             };
         }
 
         async function computeCalibration() {
-            const countStr = document.getElementById('count-text').textContent;
-            if (parseInt(countStr) < 3) {
-                alert("Please capture at least 3 valid frames before computing.");
-                return;
-            }
-            
-            let name = document.getElementById('calibName').value.trim();
-            if (!name) {
-                name = "Calibration " + new Date().toLocaleString();
-            }
-
-            document.getElementById('status-text').textContent = 'Computing Calibration... Please wait.';
-            document.getElementById('status-text').style.color = '#ffc107';
-            
+            const count = parseInt(document.getElementById('count-text').textContent);
+            if (count < 3) { alert('Please capture at least 3 valid frames before computing.'); return; }
+            const model = selectedModel();
+            setStatus('Computing ' + model + ' calibration…', '#ffc107');
             try {
-                const response = await fetch('/api/calibrate/compute');
-                const data = await response.json();
-                
+                const data = await fetch('/api/calibrate/compute?model=' + encodeURIComponent(model)).then(r => r.json());
                 if (data.success) {
-                    // Save to multiple calibrations list
                     let list = JSON.parse(localStorage.getItem('slam_calib_list') || '[]');
-                    data.name = name;
-                    data.id = Date.now(); // unique ID
+                    data.name = 'Calibration ' + new Date().toLocaleString();
+                    data.id = Date.now();
                     list.push(data);
                     localStorage.setItem('slam_calib_list', JSON.stringify(list));
-                    
-                    alert("Calibration successful! Saved as '" + name + "' and applied to tracking.");
+                    alert('Calibration successful! (' + data.model + ') Applied to tracking.');
                     window.location.href = '/';
                 } else {
-                    alert("Calibration failed. Please capture more varied angles.");
-                    document.getElementById('status-text').textContent = 'Calibration Failed';
-                    document.getElementById('status-text').style.color = '#dc3545';
+                    alert('Calibration failed: ' + (data.error || 'Capture more varied angles.'));
+                    setStatus('Calibration Failed', '#dc3545');
                 }
-            } catch (e) {
-                alert('Error computing calibration');
-            }
+            } catch (e) { alert('Error computing calibration'); }
+        }
+
+        async function applyManual() {
+            const model = selectedModel();
+            const isFisheye = model === 'KannalaBrandt8';
+            const params = new URLSearchParams({
+                model,
+                fx: document.getElementById('m_fx').value,
+                fy: document.getElementById('m_fy').value,
+                cx: document.getElementById('m_cx').value,
+                cy: document.getElementById('m_cy').value,
+                k1: document.getElementById('m_k1').value,
+                k2: document.getElementById('m_k2').value,
+                p1: document.getElementById('m_p1').value,
+                p2: document.getElementById('m_p2').value,
+                k3: isFisheye ? '0' : document.getElementById('m_k3').value,
+            });
+            try {
+                const data = await fetch('/api/calibrate/apply?' + params).then(r => r.json());
+                if (data.success) alert('Manual ' + data.model + ' calibration applied.');
+                else alert('Apply failed.');
+            } catch (e) { alert('Error applying calibration'); }
         }
 
         async function exitCalibration() {
