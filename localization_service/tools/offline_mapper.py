@@ -773,6 +773,25 @@ def cmd_visualize(args):
     smap = SparseMap.load(args.map)
     smap.print_stats()
     html_dir = Path(__file__).parent.parent / "html"
+
+    # ── Filter outlier MapPoints before sending to the browser ────────────────
+    cam_centers = np.array([kf.camera_center for kf in smap.keyframes])
+    def min_cam_dist(pos):
+        return float(np.min(np.linalg.norm(cam_centers - pos, axis=1)))
+
+    dists = np.array([min_cam_dist(mp.pos) for mp in smap.mappoints])
+    if len(dists) > 0:
+        p90      = float(np.percentile(dists, 90))
+        threshold = p90 * 1.5
+        keep     = dists <= threshold
+        n_removed = int((~keep).sum())
+        if n_removed:
+            print(f"Outlier filter: p90={p90:.2f} m  threshold={threshold:.2f} m  "
+                  f"removed {n_removed}/{len(dists)} points")
+        mappoints = [mp for mp, ok in zip(smap.mappoints, keep) if ok]
+    else:
+        mappoints = smap.mappoints
+
     map_data = {
         "camera":    smap.camera.to_dict(),
         "keyframes": [
@@ -783,7 +802,7 @@ def cmd_visualize(args):
         "mappoints": [
             {"id": mp.id, "pos": mp.pos.tolist(),
              "n_obs": len(mp.observations)}
-            for mp in smap.mappoints
+            for mp in mappoints
         ],
     }
     _viewer_serve(map_data, args.port, html_dir)

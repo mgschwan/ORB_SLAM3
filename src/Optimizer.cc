@@ -1185,6 +1185,21 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
         return;
     }
 
+    // Count free (non-fixed) local keyframes. If all are forced/fixed there are
+    // zero pose variables for g2o and BlockSolver asserts _sizePoses > 0.
+    int numFreeLocalKFs = 0;
+    for(list<KeyFrame*>::iterator lit=lLocalKeyFrames.begin(), lend=lLocalKeyFrames.end(); lit!=lend; lit++)
+    {
+        KeyFrame* pKFi = *lit;
+        if(pKFi->mnId != pMap->GetInitKFid() && !pKFi->mbForcedPose)
+            numFreeLocalKFs++;
+    }
+    if(numFreeLocalKFs == 0)
+    {
+        Verbose::PrintMess("LM-LBA: All local KFs have forced/fixed poses, skipping LBA", Verbose::VERBOSITY_NORMAL);
+        return;
+    }
+
     // Setup optimizer
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;

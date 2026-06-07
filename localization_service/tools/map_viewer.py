@@ -60,8 +60,7 @@ controls.enableDamping  = true;
 controls.dampingFactor  = 0.05;
 
 scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-scene.add(new THREE.AxesHelper(0.3));
-scene.add(new THREE.GridHelper(20, 40, 0x333333, 0x222222));
+// Grid and axes are added after data loads so they can be sized to the scene.
 
 window.addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
@@ -107,6 +106,31 @@ fetch('/map.json').then(r => r.json()).then(data => {
   const kfs = data.keyframes;
   const mps = data.mappoints;
 
+  // ── Compute scene scale first so everything else can reference it ──────────
+  const allPts = mps.length > 0 ? mps.map(mp => orb2three(...mp.pos))
+                                 : kfs.map(kf => camPtToThree(0,0,0,kf.Twc));
+  const bbox   = new THREE.Box3().setFromPoints(allPts);
+  const center = bbox.getCenter(new THREE.Vector3());
+  const extent = Math.max(bbox.getSize(new THREE.Vector3()).length(), 0.5);
+
+  // ── Grid and axes sized to scene ───────────────────────────────────────────
+  const gridSize = extent * 2.5;
+  const gridDivs = Math.max(10, Math.min(80, Math.round(gridSize * 4)));
+  const grid = new THREE.GridHelper(gridSize, gridDivs, 0x333333, 0x222222);
+  grid.position.set(center.x, bbox.min.y, center.z);
+  scene.add(grid);
+  scene.add(new THREE.AxesHelper(extent * 0.08));
+
+  // ── Camera clip planes and orbit controls scaled to scene ──────────────────
+  camera.near = extent * 0.001;
+  camera.far  = extent * 100;
+  camera.updateProjectionMatrix();
+  controls.minDistance = extent * 0.01;
+  controls.maxDistance = extent * 20;
+  controls.zoomSpeed   = 0.8;
+  controls.panSpeed    = 0.6;
+
+  // ── MapPoints ─────────────────────────────────────────────────────────────
   if (mps.length > 0) {
     const pos = new Float32Array(mps.length * 3);
     mps.forEach((mp, i) => {
@@ -116,20 +140,12 @@ fetch('/map.json').then(r => r.json()).then(data => {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     scene.add(new THREE.Points(geo,
-      new THREE.PointsMaterial({color:0xffdd44, size:0.015})));
+      new THREE.PointsMaterial({color:0xffdd44, size:extent * 0.003})));
   }
 
-  let frustumDepth = 0.1;
-  if (mps.length > 1) {
-    let mn=[Infinity,Infinity,Infinity], mx=[-Infinity,-Infinity,-Infinity];
-    mps.forEach(mp => {
-      for(let k=0;k<3;k++){mn[k]=Math.min(mn[k],mp.pos[k]);mx[k]=Math.max(mx[k],mp.pos[k]);}
-    });
-    const ext = Math.sqrt((mx[0]-mn[0])**2+(mx[1]-mn[1])**2+(mx[2]-mn[2])**2);
-    frustumDepth = Math.max(0.02, ext * 0.06);
-  }
-
-  const cameraGroup = new THREE.Group();
+  // ── Camera frustums + trajectory ───────────────────────────────────────────
+  const frustumDepth = extent * 0.06;
+  const cameraGroup  = new THREE.Group();
   scene.add(cameraGroup);
 
   const camPts = [];
@@ -152,15 +168,11 @@ fetch('/map.json').then(r => r.json()).then(data => {
       new THREE.LineBasicMaterial({color:0x888888})));
   }
 
-  if (mps.length > 0) {
-    const pts3 = mps.map(mp => orb2three(...mp.pos));
-    const bbox = new THREE.Box3().setFromPoints(pts3);
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size   = bbox.getSize(new THREE.Vector3()).length();
-    controls.target.copy(center);
-    camera.position.copy(center).add(new THREE.Vector3(0, size*0.5, size*1.2));
-    controls.update();
-  }
+  // ── Fit initial camera view to scene ──────────────────────────────────────
+  controls.target.copy(center);
+  camera.position.copy(center).add(
+    new THREE.Vector3(0, extent * 0.5, extent * 1.2));
+  controls.update();
 
   document.getElementById('panel').innerHTML =
     '<b>Sparse Map</b><br>' +
