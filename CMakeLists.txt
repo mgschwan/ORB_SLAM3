@@ -150,6 +150,12 @@ add_executable(inspect_osa
         Examples/Monocular/inspect_osa.cc)
 target_link_libraries(inspect_osa ${PROJECT_NAME} -lGL -lboost_serialization)
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/localization_service/tools)
+
+add_executable(osa_convert
+        localization_service/tools/osa_convert.cc)
+target_link_libraries(osa_convert ${PROJECT_NAME} -lGL -lboost_serialization)
+
 
 # Install targets for AppImage packaging
 # Set CMAKE_INSTALL_PREFIX to the AppDir path when building for AppImage:

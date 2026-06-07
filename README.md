@@ -38,10 +38,13 @@ cd ../../../Thirdparty/g2o && mkdir -p build && cd build && cmake .. && make -j4
 # Build the project
 mkdir -p build && cd build
 cmake ..
-make -j4 localization_service_host
+ninja localization_service_host   # or: make -j4 localization_service_host
+
+# Optionally build the OSA conversion tool
+ninja osa_convert
 ```
 
-The binary is output to `localization_service/localization_service_host`.
+The main binary is output to `localization_service/localization_service_host`. The OSA tool is output to `localization_service/tools/osa_convert`.
 
 You also need the ORB vocabulary file:
 
@@ -328,6 +331,59 @@ The empty-body POST is a lightweight pose-only query — it does not submit a fr
 
 A ready-to-run streaming version that forwards a full camera feed is provided in `tools/send_camera_frames.py`.
 
+## Offline atlas tools
+
+The `localization_service/tools/` directory contains tools for working with `.osa` map files outside of a live SLAM session.
+
+### `osa_convert` (C++ CLI)
+
+Converts an `.osa` atlas to/from a portable JSON representation. Useful for inspecting, editing, or programmatically constructing maps.
+
+```bash
+# Serialize an atlas to JSON (binary blobs are base64-encoded)
+./localization_service/tools/osa_convert dump  Session.osa  atlas.json
+
+# Pack the JSON back into a loadable .osa file
+./localization_service/tools/osa_convert pack  atlas.json   output.osa
+```
+
+The JSON contains every serialized field: vocabulary metadata, all Maps, KeyFrames (pose, descriptors, keypoints, BoW vectors, covisibility, spanning tree, IMU state), and MapPoints (world position, descriptor, observations, depth limits). Full round-trips are lossless: 284 KFs / 7271 MPs dump and pack back identically.
+
+Build with:
+```bash
+cd build && ninja osa_convert
+```
+
+### `osa_file.py` (Python module)
+
+A Python module that wraps `osa_convert` to provide high-level read/write access to OSA atlas files from Python scripts.
+
+```python
+from localization_service.tools.osa_file import OsaAtlas
+
+atlas = OsaAtlas.load("Session.osa")
+m = atlas.maps[0]
+
+# NumPy arrays for all 3D data
+pts    = m.world_points()      # (N, 3) float32 — MapPoint world coordinates
+cams   = m.camera_centers()    # (K, 3) float32 — KeyFrame camera positions
+
+# Access individual elements
+kf = m.keyframes[0]
+print(kf.timestamp, kf.fx, kf.descriptors.shape)   # e.g. (1506, 32)
+
+mp = m.mappoints[0]
+print(mp.world_pos, mp.descriptor.shape)            # e.g. (32,)
+
+# Round-trip save
+atlas.save("output.osa")
+
+# Create a blank atlas for building a map from scratch
+atlas = OsaAtlas.new("ORBvoc.txt", "checksum")
+```
+
+These tools are the foundation for an offline atlas-construction pipeline that can build higher-quality maps from a directory of images using techniques not available in the real-time tracker.
+
 ## Project structure
 
 ```
@@ -352,8 +408,13 @@ localization_service/
     viewer.html                   — pose and map viewer
     calibration.html              — calibration assistant
   tools/
+    osa_convert.cc                — C++ source for OSA ↔ JSON converter
+    osa_convert                   — built binary (OSA ↔ JSON CLI)
+    osa_file.py                   — Python module for reading/writing OSA files
     tello_camera_server.py        — relay server for Tello drone camera
     send_camera_frames.py         — forward a local camera to the frame ingest API
+    record_frames.py              — record frames to disk for offline processing
+    replay_frames.py              — replay recorded frames into the ingest API
   example.yaml                    — sample camera configuration
 
 Thirdparty/orblsammer_espnode/

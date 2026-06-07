@@ -84,7 +84,13 @@ ORB_SLAM3/
 │   │   ├── viewer.html      - Pose/map viewer
 │   │   └── calibration.html - Camera calibration helper
 │   ├── tools/
-│   │   └── tello_camera_server.py - Tello drone camera relay server
+│   │   ├── tello_camera_server.py - Tello drone camera relay server
+│   │   ├── send_camera_frames.py  - Forward a local camera to the frame ingest API
+│   │   ├── record_frames.py       - Record frames to disk for offline processing
+│   │   ├── replay_frames.py       - Replay recorded frames into the ingest API
+│   │   ├── osa_convert.cc         - [CUSTOM] C++ CLI: dump/pack OSA ↔ JSON
+│   │   ├── osa_convert            - [BUILT EXECUTABLE]
+│   │   └── osa_file.py            - [CUSTOM] Python module: read/write OSA atlas files
 │   └── example.yaml         - Example camera configuration
 │
 ├── Examples/                - Active examples (only monocular built by modified CMake)
@@ -130,6 +136,80 @@ ORB_SLAM3/
 └── lib/
     └── libORB_SLAM3.so      - Compiled shared library
 ```
+
+## OSA File Format and Offline Atlas Tools
+
+### OSA file format
+
+An `.osa` file is a **Boost binary archive** produced by `boost::archive::binary_oarchive`. The layout is:
+
+1. `std::string vocabName` — vocabulary filename (e.g. `"ORBvoc.txt"`)
+2. `std::string vocabChecksum` — MD5/SHA of the vocabulary
+3. `Atlas* mpAtlas` — pointer-serialized via `boost::serialization`; the Atlas recursively serializes its Maps, KeyFrames, and MapPoints using `PreSave`/`PostLoad` pointer-to-ID transformations
+
+All major classes use `template<class Archive> void serialize(Archive&, unsigned int)`. Key serialization utilities live in `include/SerializationUtils.h` (`serializeSophusSE3`, `serializeMatrix`, `serializeVectorKeyPoints`).
+
+### `osa_convert` (C++ tool — `localization_service/tools/osa_convert.cc`)
+
+A standalone command-line tool that converts an OSA file to/from an intermediate JSON representation.
+
+```bash
+./localization_service/tools/osa_convert dump  <input.osa>  <output.json>
+./localization_service/tools/osa_convert pack  <input.json> <output.osa>
+```
+
+**`dump`** walks the Atlas hierarchy and writes all serialized fields as JSON. Binary blobs (cv::Mat descriptors, Sophus SE3, KeyPoints) are base64-encoded. NaN/inf floats (common in uninitialized IMU fields for monocular maps) are sanitized to 0.0.
+
+**`pack`** reconstructs a fully loadable Atlas from the JSON. Cameras are re-created via their constructors (which auto-assign IDs via `GeometricCamera::nNextId`). KeyFrame/MapPoint fields that are `const` or `protected` are set via `const_cast` and wrapper subclass setters.
+
+Build target (Ninja):
+```bash
+cd build && ninja osa_convert
+```
+
+**Implementation notes for agents:**
+- Wrapper subclasses (`MapWrapper`, `AtlasWrapper`, `KeyFrameAccess`, `MapPointAccess`) expose `protected` members and provide `const_cast` setters
+- `IMU::Preintegrated` is not copyable (contains `std::mutex`); it must be filled in-place via `fill_imu_preint(json, IMU::Preintegrated&)`
+- Camera IDs: reset `GeometricCamera::nNextId = 0` before creating cameras; constructors auto-assign `mnId = nNextId++`; restore afterwards
+- The project uses C++14 — no structured bindings (`auto& [k, v]`)
+
+### `osa_file.py` (Python module — `localization_service/tools/osa_file.py`)
+
+A pure-Python module for reading and writing OSA files. It shells out to `osa_convert` for the actual serialization and deserializes the JSON into typed dataclasses backed by NumPy arrays.
+
+```python
+from localization_service.tools.osa_file import OsaAtlas
+
+# Load an existing atlas
+atlas = OsaAtlas.load("Session.osa")
+
+# Inspect
+m = atlas.maps[0]
+pts   = m.world_points()        # (N, 3) float32 — all MapPoint positions
+cams  = m.camera_centers()      # (K, 3) float32 — all KeyFrame camera centers
+kf    = m.keyframe_by_id(42)    # OsaKeyFrame | None
+mp    = m.mappoint_by_id(123)   # OsaMapPoint | None
+
+# Round-trip save
+atlas.save("output.osa")
+
+# Create a blank atlas for building from scratch
+atlas = OsaAtlas.new("ORBvoc.txt", "checksum_string")
+
+# Dump intermediate JSON for debugging
+atlas.to_json_file("debug.json")
+```
+
+**Key dataclasses:**
+- `OsaAtlas`: `vocab_name`, `vocab_checksum`, static ID fields, `cameras` (list of `OsaCamera`), `maps` (list of `OsaMap`)
+- `OsaMap`: `id`, `keyframes` (list of `OsaKeyFrame`), `mappoints` (list of `OsaMapPoint`)
+- `OsaKeyFrame`: `id`, `timestamp`, `tcw` (4×4 float32 camera-to-world), `fx/fy/cx/cy`, `descriptors` (N×32 uint8), `keypoints`, `bow_vec`, `feat_vec`, `mappoint_ids`, `grid`, `connected_kf_weights`, spanning tree fields, IMU fields
+- `OsaMapPoint`: `id`, `first_kf_id`, `world_pos` (float32[3]), `normal` (float32[3]), `descriptor` (uint8[32]), `obs1`/`obs2` dicts, `min_dist`, `max_dist`
+
+**Helper functions** (in `osa_file.py`):
+- `build_feature_grid(keypoints, width, height, grid_cols, grid_rows)` — assigns keypoints to spatial grid cells
+- `make_scale_pyramid(scale_levels, scale_factor)` — returns `(factors, sigma2, inv_sigma2, log_factor)`
+- `_default_imu_preint()` / `_default_imu_calib()` — zero-filled IMU defaults for monocular (non-inertial) atlases
 
 ## Major Changes
 
