@@ -544,12 +544,208 @@ def cmd_seed(args):
     smap.print_stats()
 
 
-# ─── Command: expand (Phase 2 stub) ──────────────────────────────────────────
+# ─── Command: expand (Phase 2) ───────────────────────────────────────────────
 
 def cmd_expand(args):
-    print("expand: Phase 2 — not yet implemented")
-    print("See MappingProject.md for the planned algorithm.")
-    sys.exit(1)
+    recording_dir = Path(args.recording_dir)
+    smap = SparseMap.load(args.map)
+    camera = smap.camera
+    K      = camera.K
+    unity  = (args.coordsys == "unity")
+
+    print(f"Map        : {len(smap.keyframes)} KFs, {len(smap.mappoints)} MPs")
+
+    frames = load_recording(recording_dir)
+    existing = {kf.recording_index for kf in smap.keyframes}
+    candidates = [fr for fr in frames if fr["index"] not in existing]
+    print(f"Candidates : {len(candidates)} frames to process")
+
+    if not candidates:
+        print("Nothing to do — all frames already in map.")
+        return
+
+    # Track which KP index (per KF) is already assigned to a MapPoint.
+    # Updated incrementally as we add observations / new MPs.
+    used_kp: dict[int, set] = {}
+    for mp in smap.mappoints:
+        for kf_id, kp_idx in mp.observations.items():
+            used_kp.setdefault(kf_id, set()).add(kp_idx)
+
+    bf = cv2.BFMatcher(cv2.NORM_L2)
+
+    n_kf_added = 0
+    n_mp_added_total = 0
+
+    for fr in candidates:
+        Twc_new = pose_to_Twc(fr["pose"], unity)
+        Tcw_new = np.linalg.inv(Twc_new)
+        pos_new = Twc_new[:3, 3]
+
+        kps_new, des_new = extract_sift(recording_dir / fr["file"], args.nfeatures)
+        if des_new is None or len(kps_new) < 10:
+            continue
+
+        # ── Match existing MapPoints to new-frame KPs ─────────────────────────
+        # Project each MP, collect descriptor from the closest observing KF,
+        # then BF-match against the new frame.
+        vis_mps, vis_proj, vis_descs = [], [], []
+        for mp in smap.mappoints:
+            pc = Tcw_new[:3, :3] @ mp.pos + Tcw_new[:3, 3]
+            if pc[2] < args.min_depth:
+                continue
+            px = K[0, 0] * pc[0] / pc[2] + K[0, 2]
+            py = K[1, 1] * pc[1] / pc[2] + K[1, 2]
+            if not (0 <= px < camera.width and 0 <= py < camera.height):
+                continue
+            # Descriptor: pick from the observing KF nearest to new camera
+            best_kid = min(mp.observations,
+                           key=lambda kid: np.linalg.norm(
+                               smap.keyframe_by_id(kid).camera_center - pos_new))
+            kf_src = smap.keyframe_by_id(best_kid)
+            vis_mps.append(mp)
+            vis_proj.append((px, py))
+            vis_descs.append(kf_src.descriptors[mp.observations[best_kid]])
+
+        matched_kp_set: set = set()   # KP indices in new frame consumed by MP matches
+        mp_new_obs: dict    = {}      # mp.id -> kp_idx_in_new_frame
+
+        if vis_mps:
+            mp_desc_arr = np.array(vis_descs, dtype=np.float32)
+            matches = bf.knnMatch(mp_desc_arr, des_new, k=2)
+            for i, pair in enumerate(matches):
+                if len(pair) < 2:
+                    continue
+                m, n = pair
+                if m.distance >= args.ratio * n.distance:
+                    continue
+                kp = kps_new[m.trainIdx]
+                # Must be within search radius of projected position
+                dx = kp.pt[0] - vis_proj[i][0]
+                dy = kp.pt[1] - vis_proj[i][1]
+                if dx * dx + dy * dy > args.search_radius ** 2:
+                    continue
+                # Reprojection check
+                if reprojection_error(vis_mps[i].pos, kp, K, Tcw_new) > args.max_reproj:
+                    continue
+                matched_kp_set.add(m.trainIdx)
+                mp_new_obs[vis_mps[i].id] = m.trainIdx
+
+        n_matched = len(mp_new_obs)
+        if n_matched < args.min_tracked:
+            continue
+
+        # ── Triangulate new points from free KPs ─────────────────────────────
+        free_new = np.array([i for i in range(len(kps_new))
+                             if i not in matched_kp_set], dtype=np.int32)
+
+        # Candidate existing KFs: within baseline range and view-angle limit
+        ax_new = Twc_new[:3, 2] / np.linalg.norm(Twc_new[:3, 2])
+        tri_kfs = []
+        for kf in smap.keyframes:
+            b = float(np.linalg.norm(kf.camera_center - pos_new))
+            if b < args.min_baseline or b > args.max_baseline:
+                continue
+            ax_kf = kf.Twc[:3, 2] / np.linalg.norm(kf.Twc[:3, 2])
+            ang = float(np.degrees(np.arccos(np.clip(ax_new @ ax_kf, -1.0, 1.0))))
+            if ang > args.max_view_angle:
+                continue
+            tri_kfs.append((b, kf))
+        tri_kfs.sort(key=lambda x: -x[0])         # widest baseline first
+        tri_kfs = tri_kfs[:args.max_tri_kfs]
+
+        planned_kf_id = smap._next_kf_id           # ID the new KF will receive
+        new_mps: list = []                          # (pos, obs_dict) to add
+
+        for _, kf_tri in tri_kfs:
+            Tcw_tri = kf_tri.Tcw
+            free_tri = np.array([i for i in range(len(kf_tri.keypoints))
+                                 if i not in used_kp.get(kf_tri.id, set())],
+                                dtype=np.int32)
+            if len(free_tri) == 0 or len(free_new) == 0:
+                continue
+
+            des_free_new = des_new[free_new]
+            des_free_tri = kf_tri.descriptors[free_tri]
+
+            mi, mj = match_features(des_free_new, des_free_tri, args.ratio)
+            if len(mi) < 4:
+                continue
+
+            mi_orig = free_new[mi]
+            mj_orig = free_tri[mj]
+
+            mi_orig, mj_orig = epipolar_filter(
+                kps_new, kf_tri.keypoints, mi_orig, mj_orig,
+                K, Tcw_new, Tcw_tri, args.epi_threshold)
+            if len(mi_orig) < 4:
+                continue
+
+            pts3d = triangulate_points(kps_new, kf_tri.keypoints,
+                                       mi_orig, mj_orig, K, Tcw_new, Tcw_tri)
+            mask = filter_points(pts3d, kps_new, kf_tri.keypoints,
+                                 mi_orig, mj_orig, K, Tcw_new, Tcw_tri,
+                                 args.max_reproj, args.min_depth, args.max_depth)
+
+            for k in range(len(pts3d)):
+                if not mask[k]:
+                    continue
+                in_new = int(mi_orig[k])
+                in_tri = int(mj_orig[k])
+                if in_new in matched_kp_set:
+                    continue   # KP already used
+                new_mps.append((pts3d[k], {planned_kf_id: in_new,
+                                            kf_tri.id:    in_tri}))
+                matched_kp_set.add(in_new)
+                used_kp.setdefault(kf_tri.id, set()).add(in_tri)
+
+        n_new_pts = len(new_mps)
+        if n_new_pts < args.min_new_pts:
+            continue
+
+        # ── Add keyframe + observations + new MPs ─────────────────────────────
+        kf_new = smap.add_keyframe(fr["index"], fr["file"], fr["ts_ms"],
+                                   Twc_new, list(kps_new), des_new)
+        assert kf_new.id == planned_kf_id
+
+        for mp in smap.mappoints:
+            if mp.id in mp_new_obs:
+                kp_idx = mp_new_obs[mp.id]
+                mp.observations[kf_new.id] = kp_idx
+                used_kp.setdefault(kf_new.id, set()).add(kp_idx)
+
+        for pos, obs in new_mps:
+            smap.add_mappoint(pos, obs)
+            for kf_id, kp_idx in obs.items():
+                used_kp.setdefault(kf_id, set()).add(kp_idx)
+
+        # ── Cull MPs with < 2 observations or excessive reprojection error ─────
+        to_cull = set()
+        for mp in smap.mappoints:
+            if len(mp.observations) < 2:
+                to_cull.add(mp.id)
+                continue
+            for kf_id, kp_idx in mp.observations.items():
+                kf = smap.keyframe_by_id(kf_id)
+                if kf is None:
+                    continue
+                if reprojection_error(mp.pos, kf.keypoints[kp_idx],
+                                      K, kf.Tcw) > args.max_reproj * 2:
+                    to_cull.add(mp.id)
+                    break
+        if to_cull:
+            smap.mappoints = [mp for mp in smap.mappoints if mp.id not in to_cull]
+
+        n_kf_added      += 1
+        n_mp_added_total += n_new_pts
+        print(f"  Frame #{fr['index']:4d}: "
+              f"tracked={n_matched:4d}  new_pts={n_new_pts:4d}  "
+              f"culled={len(to_cull):3d}  total_MPs={len(smap.mappoints)}")
+
+    print(f"\nAdded {n_kf_added} KFs, {n_mp_added_total} new MPs")
+    out = Path(args.output) if args.output else Path(args.map)
+    smap.save(out)
+    print()
+    smap.print_stats()
 
 
 # ─── Command: bundle_adjust (Phase 3 stub) ───────────────────────────────────
@@ -654,9 +850,42 @@ def main():
 
     # ── expand ────────────────────────────────────────────────────────────────
     p = sub.add_parser("expand",
-                       help="Add more frames to the map (Phase 2 — planned)")
+                       help="Incrementally add frames to grow the map (Phase 2)")
     p.add_argument("recording_dir", help="Recording directory")
-    p.add_argument("--map", required=True, help="Existing sparse_map.json to extend")
+    p.add_argument("--map",    required=True,
+                   help="Existing sparse_map.json to extend")
+    p.add_argument("--output", default=None,
+                   help="Output path (default: overwrite --map)")
+    p.add_argument("--coordsys", choices=["orbslam", "unity"], default="orbslam",
+                   help="Coordinate system of recorded poses (default: orbslam)")
+    p.add_argument("--nfeatures", type=int, default=5000,
+                   help="Max SIFT features per image (default: 5000)")
+    p.add_argument("--ratio", type=float, default=0.75,
+                   help="Lowe ratio test threshold (default: 0.75)")
+    p.add_argument("--min-tracked", type=int, default=10, dest="min_tracked",
+                   help="Min existing MPs matched to consider a frame (default: 10)")
+    p.add_argument("--min-new-pts", type=int, default=5, dest="min_new_pts",
+                   help="Min new triangulated points to add a frame as KF (default: 5)")
+    p.add_argument("--search-radius", type=float, default=30.0, dest="search_radius",
+                   metavar="PX",
+                   help="Pixel radius for projected-MP → KP search (default: 30 px)")
+    p.add_argument("--max-tri-kfs", type=int, default=5, dest="max_tri_kfs",
+                   help="Max existing KFs to attempt triangulation against (default: 5)")
+    p.add_argument("--min-baseline", type=float, default=0.05, dest="min_baseline",
+                   metavar="M", help="Min baseline for triangulation (default: 0.05 m)")
+    p.add_argument("--max-baseline", type=float, default=5.0, dest="max_baseline",
+                   metavar="M", help="Max baseline for triangulation (default: 5.0 m)")
+    p.add_argument("--max-view-angle", type=float, default=30.0, dest="max_view_angle",
+                   metavar="DEG",
+                   help="Max optical-axis angle for triangulation partners (default: 30°)")
+    p.add_argument("--epi-threshold", type=float, default=2.0, dest="epi_threshold",
+                   metavar="PX", help="Sampson epipolar distance cutoff (default: 2.0 px)")
+    p.add_argument("--max-reproj", type=float, default=2.0, dest="max_reproj",
+                   metavar="PX", help="Max reprojection error to keep a point (default: 2.0 px)")
+    p.add_argument("--min-depth", type=float, default=0.01, dest="min_depth",
+                   metavar="M", help="Min triangulated depth (default: 0.01 m)")
+    p.add_argument("--max-depth", type=float, default=100.0, dest="max_depth",
+                   metavar="M", help="Max triangulated depth (default: 100.0 m)")
     p.set_defaults(func=cmd_expand)
 
     # ── bundle_adjust ─────────────────────────────────────────────────────────

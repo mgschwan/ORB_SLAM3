@@ -24,11 +24,19 @@ _HTML_TEMPLATE = """\
     padding:12px 16px; border-radius:8px;
     font-size:12px; line-height:1.6; min-width:160px;
     pointer-events:none;
+    user-select:none;
   }
   #panel b { color:#fff; }
   .dot-yellow { color:#ffdd44; }
   .dot-red    { color:#ff5533; }
   .dot-green  { color:#44ff88; }
+  #btn-cameras {
+    display:block; width:100%; margin-top:10px;
+    background:#2a2a3e; color:#ccc; border:1px solid #555;
+    border-radius:4px; padding:5px 0; font-size:11px;
+    font-family:monospace; cursor:pointer; pointer-events:auto;
+  }
+  #btn-cameras:hover { background:#3a3a5e; color:#fff; }
 </style>
 <script>__THREE_JS__</script>
 <script>__ORBIT_JS__</script>
@@ -121,11 +129,14 @@ fetch('/map.json').then(r => r.json()).then(data => {
     frustumDepth = Math.max(0.02, ext * 0.06);
   }
 
+  const cameraGroup = new THREE.Group();
+  scene.add(cameraGroup);
+
   const camPts = [];
   kfs.forEach((kf, i) => {
     const t = i / Math.max(kfs.length - 1, 1);
     const color = new THREE.Color(1-t, 0.2+t*0.8, 0.2);
-    scene.add(makeFrustum(kf, cam, frustumDepth, color));
+    cameraGroup.add(makeFrustum(kf, cam, frustumDepth, color));
     camPts.push(camPtToThree(0, 0, 0, kf.Twc));
   });
 
@@ -137,7 +148,7 @@ fetch('/map.json').then(r => r.json()).then(data => {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setIndex(idx);
-    scene.add(new THREE.LineSegments(geo,
+    cameraGroup.add(new THREE.LineSegments(geo,
       new THREE.LineBasicMaterial({color:0x888888})));
   }
 
@@ -157,7 +168,14 @@ fetch('/map.json').then(r => r.json()).then(data => {
     '<span class="dot-red">&#9632;</span> First cam &nbsp;' +
     '<span class="dot-green">&#9632;</span> Last cam<br>' +
     'Keyframes: ' + kfs.length + '<br>' +
-    '<br><span style="color:#666;font-size:11px">Drag to orbit · Scroll to zoom<br>Right-drag to pan</span>';
+    '<br><span style="color:#666;font-size:11px">Drag to orbit · Scroll to zoom<br>Right-drag to pan</span>' +
+    '<button id="btn-cameras">Hide cameras</button>';
+
+  document.getElementById('btn-cameras').addEventListener('click', () => {
+    cameraGroup.visible = !cameraGroup.visible;
+    document.getElementById('btn-cameras').textContent =
+      cameraGroup.visible ? 'Hide cameras' : 'Show cameras';
+  });
 });
 
 // ── Render loop ─────────────────────────────────────────────────────────────
