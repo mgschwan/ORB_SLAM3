@@ -588,6 +588,7 @@ void Tracking::newParameterLoader(Settings *settings) {
     mMaxFrames = settings->fps();
     mbRGB = settings->rgb();
     mMinInitMatches = settings->minInitMatches();
+    mForcedPoseMinBaseline = settings->forcedPoseMinBaseline();
 
     //ORB parameters
     int nFeatures = settings->nFeatures();

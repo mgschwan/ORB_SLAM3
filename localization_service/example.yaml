@@ -56,6 +56,8 @@ Camera.RGB: 1
 # (e.g. ESP32-CAM at 320x240) where fewer keypoints are available overall.
 Tracking.minInitMatches: 50
 
+Tracking.forcedPoseMinBaseline: 0.08
+
 #--------------------------------------------------------------------------------------------
 # ORB Parameters
 #--------------------------------------------------------------------------------------------

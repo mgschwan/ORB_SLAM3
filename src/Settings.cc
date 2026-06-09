@@ -483,6 +483,9 @@ namespace ORB_SLAM3 {
         minInitMatches_ = readParameter<int>(fSettings,"Tracking.minInitMatches",found,false);
         if(!found)
             minInitMatches_ = 100;
+        forcedPoseMinBaseline_ = readParameter<float>(fSettings,"Tracking.forcedPoseMinBaseline",found,false);
+        if(!found)
+            forcedPoseMinBaseline_ = 0.15f;
     }
 
     void Settings::precomputeRectificationMaps() {

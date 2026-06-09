@@ -34,7 +34,7 @@ namespace ORB_SLAM3 {
 // Thresholds — tweak here rather than hunting through MonocularInitialization
 // ---------------------------------------------------------------------------
 
-static constexpr float kMinBaseline      = 0.15f;   // metres: wait for this much camera travel
+static constexpr float kMinBaseline      = 0.15f;   // default — overridden per-instance by mForcedPoseMinBaseline
 static constexpr float kEpipolarTh       = 2.5f;    // Sampson distance in pixels
 static constexpr float kReprojTh2        = 4.0f;    // reprojection error threshold (pixels²)
 static constexpr float kMinCosParallax   = 0.9998f; // ≈1.1° min parallax
@@ -70,10 +70,11 @@ void Tracking::ForcedPoseMonocularInit(int nmatches)
     }
 
     // ---- Baseline gate ----------------------------------------------------
-    if(t.norm() < kMinBaseline)
+    const float minBaseline = mForcedPoseMinBaseline;
+    if(t.norm() < minBaseline)
     {
         cout << "[ForcedPoseInit] baseline=" << t.norm()
-             << "m < " << kMinBaseline << "m, waiting" << endl;
+             << "m < " << minBaseline << "m, waiting" << endl;
         return;
     }
 

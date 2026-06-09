@@ -355,6 +355,9 @@ protected:
     // Minimum keypoint/match counts for monocular initialization (YAML: Tracking.minInitMatches)
     int mMinInitMatches;
 
+    // Minimum camera baseline (metres) before ForcedPoseMonocularInit will triangulate (YAML: Tracking.forcedPoseMinBaseline)
+    float mForcedPoseMinBaseline;
+
     int mnFirstImuFrameId;
     int mnFramesToResetIMU;
 

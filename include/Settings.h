@@ -117,6 +117,7 @@ namespace ORB_SLAM3 {
 
         float thFarPoints() {return thFarPoints_;}
         int minInitMatches() {return minInitMatches_;}
+        float forcedPoseMinBaseline() {return forcedPoseMinBaseline_;}
 
         cv::Mat M1l() {return M1l_;}
         cv::Mat M2l() {return M2l_;}
@@ -229,6 +230,7 @@ namespace ORB_SLAM3 {
          */
         float thFarPoints_;
         int minInitMatches_;
+        float forcedPoseMinBaseline_;
 
     };
 };
