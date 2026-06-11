@@ -2162,8 +2162,16 @@ void Tracking::Track()
             {
                 if(!mbVO)
                 {
+                    // After a map switch (InformMapSwitch) the reference keyframe
+                    // is cleared and the state is RECENTLY_LOST: there is nothing
+                    // to track against yet, so relocalize into the (new) map
+                    // instead of dereferencing a null reference keyframe.
+                    if(!mpReferenceKF)
+                    {
+                        bOK = Relocalization();
+                    }
                     // In last frame we tracked enough MapPoints in the map
-                    if(mbVelocity)
+                    else if(mbVelocity)
                     {
                         bOK = TrackWithMotionModel();
                     }
@@ -2956,6 +2964,12 @@ void Tracking::CheckReplacedInLastFrame()
 
 bool Tracking::TrackReferenceKeyFrame()
 {
+    // No reference keyframe to match against (e.g. right after a map switch,
+    // where InformMapSwitch clears it). Nothing to track; let the caller fall
+    // back to relocalization rather than dereferencing a null keyframe.
+    if(!mpReferenceKF)
+        return false;
+
     // Compute Bag of Words vector
     mCurrentFrame.ComputeBoW();
 
