@@ -37,9 +37,9 @@ Camera1.p2: 0.0
     
 # Camera resolution
 Camera.width: 1280
-Camera.height: 1280
-#Camera.width: 640
-#Camera.height: 480
+Camera.height: 960
+Camera.targetWidth: 640
+Camera.targetHeight: 480
 
 # Camera frames per second 
 Camera.fps: 20

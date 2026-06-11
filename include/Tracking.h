@@ -112,6 +112,10 @@ public:
 
     float GetImageScale();
 
+    // Target-resolution downscaling: returns the configured internal processing
+    // resolution (0,0 if disabled). See ParseCamParamFile / GrabImageMonocular.
+    void GetTargetSize(int &w, int &h);
+
     void SetAtlas(Atlas* pAtlas) { mpAtlas = pAtlas; }
 
     bool ForceRelocalization() { mState = LOST; return true; }
@@ -343,6 +347,42 @@ protected:
     cv::Mat mDistCoef;
     float mbf;
     float mImageScale;
+
+    // --- Target-resolution dynamic downscaling (monocular service path) ------
+    // When mTargetWidth > 0, incoming frames of any resolution are uniformly
+    // scaled inside GrabImageMonocular so the binding side matches the target,
+    // and the intrinsics are scaled by the same factor. The YAML / REST
+    // intrinsics are always expressed at the camera's native resolution; the
+    // scaled camera model is (re)built lazily once the live frame size is known.
+    // Works with both config formats (legacy ParseCamParamFile and the
+    // File.version 1.0 Settings/newParameterLoader path) — the keys are parsed
+    // in the constructor and the native source intrinsics are captured lazily
+    // from whichever camera model the loader built.
+    int     mTargetWidth   = 0;   // internal processing width  (0 = disabled)
+    int     mTargetHeight  = 0;   // internal processing height
+    int     mCalibWidth    = 0;   // Camera.width  the intrinsics refer to
+    int     mCalibHeight   = 0;   // Camera.height the intrinsics refer to
+    float   mSrcFx = 0.f, mSrcFy = 0.f, mSrcCx = 0.f, mSrcCy = 0.f; // native K
+    cv::Mat mSrcDistCoef;         // native distortion coefficients
+    int     mSrcCameraType = 0;   // GeometricCamera::CAM_PINHOLE / CAM_FISHEYE
+    bool    mbSrcCaptured  = false; // native source intrinsics captured
+    bool    mbScaleDirty   = false; // rebuild scaled camera on next frame
+    bool    mbManualCalib  = false; // REST calibration set → suppress res warning
+    bool    mbResWarned    = false; // resolution-mismatch warning emitted once
+    int     mLastFrameW    = 0, mLastFrameH = 0; // last incoming frame size
+
+    // True when target-resolution downscaling is enabled (one or both target
+    // dimensions configured).
+    bool TargetModeActive() const { return mTargetWidth > 0 || mTargetHeight > 0; }
+    // Parse the target-resolution YAML keys (camera-type / config-format
+    // agnostic). Called once from the constructor.
+    void ParseTargetResolution(cv::FileStorage &fSettings);
+    // Capture the native source intrinsics from the active camera model the
+    // loader built (lazy, on the first frame in target mode).
+    void CaptureSourceIntrinsics();
+    // Rebuild the active camera model from the native source intrinsics scaled
+    // by s (used by the target-resolution path).
+    void RebuildScaledCamera(float s);
 
     float mImuFreq;
     double mImuPer;

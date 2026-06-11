@@ -1487,6 +1487,11 @@ float System::GetImageScale()
     return mpTracker->GetImageScale();
 }
 
+void System::GetTargetSize(int &w, int &h)
+{
+    mpTracker->GetTargetSize(w, h);
+}
+
 #ifdef REGISTER_TIMES
 void System::InsertRectTime(double& time)
 {

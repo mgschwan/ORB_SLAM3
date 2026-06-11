@@ -295,6 +295,29 @@ When activated via `SLAM.ActivateLocalizationMode()`:
 ### 5. Configuration & Settings
 - **Loop Closing Toggle:** Added support for a `loopClosing` flag in the YAML settings file to enable/disable the Loop Closing thread.
 - **Image Scaling:** Improved handling of image scaling in the examples to match the SLAM system's expectations.
+- **Target Processing Resolution (dynamic scaling):** New `Camera.targetWidth` / `Camera.targetHeight` YAML keys. When set, incoming frames of any resolution are uniformly scaled to the target *inside* `Tracking::GrabImageMonocular`, so the service can accept different cameras without per-camera tuning. Works with both config formats. See below.
+
+#### Target-resolution downscaling (`Camera.targetWidth` / `Camera.targetHeight`)
+
+Goal: process at one fixed internal resolution regardless of the incoming camera resolution, while keeping every external interface (YAML intrinsics, REST calibration, chessboard capture) expressed in the camera's **native** resolution. Clients never need to know the internal processing size.
+
+**Config-format independence (important):** the keys are parsed in the **Tracking constructor** (`ParseTargetResolution`), *before* the camera loader runs, so the feature works for **both** config paths — the legacy `ParseCamParamFile` path **and** the `File.version: "1.0"` `newParameterLoader(Settings*)` path that all the service YAMLs actually use. (An earlier draft only wired it into `ParseCamParamFile`, which those YAMLs never call — `Tracking::Tracking` calls `newParameterLoader` when `settings != nullptr`.) `TargetModeActive()` = `mTargetWidth>0 || mTargetHeight>0`.
+
+**Mechanism (all in `src/Tracking.cc`):**
+- `ParseTargetResolution(fSettings)` (constructor): reads `Camera.width/height` (calibration reference, used only for the mismatch warning) and `Camera.targetWidth/targetHeight`. Either or both target dims may be set.
+- Native source intrinsics are captured **lazily** on the first frame by `CaptureSourceIntrinsics()`, reading `fx/fy/cx/cy` (+ distortion / type) straight from whichever `mpCamera` the loader built. So neither loader needs target-specific code; they only **skip** the legacy `Camera.imageScale` baking when `TargetModeActive()` (keeping intrinsics native).
+- `GrabImageMonocular` (target mode only): computes a single **uniform** scale — `min(targetW/fw, targetH/fh)` with both dims, or the single-axis ratio with one — `cv::resize`s the frame to `round(fw·s) × round(fh·s)` (**no padding**), and lazily rebuilds the scaled camera model via `RebuildScaledCamera(s)` whenever the frame size or calibration changes. `mImageScale` holds the live `s`. Frames smaller than the target are upscaled (`s > 1`) so the processing resolution always equals the target, keeping query feature scale consistent with the map descriptors.
+- `RebuildScaledCamera(float s)`: rebuilds `mpCamera` / `mK` / `mK_` from the source intrinsics scaled by `s`. **Distortion coefficients are left unchanged** — they are scale-invariant in normalized coordinates, and ORB-SLAM3 monocular undistorts feature *coordinates* (`Frame::UndistortKeyPoints`) after extraction, not the image, so scale-then-undistort is geometrically exact.
+- `ChangeCalibration(K, D, type)` (REST path): in target mode it stores the supplied **native** K as new source intrinsics, sets `mbSrcCaptured` (so the lazy capture won't clobber it), `mbManualCalib` (suppresses the mismatch warning) and `mbScaleDirty`, and returns — the scaled rebuild then happens on the tracking thread on the next frame. Legacy (non-target) behaviour is unchanged.
+- Resolution-mismatch warning: emitted once when no REST calibration is active and the frame size differs from `Camera.width/height`; the frame resolution is then assumed correct for the intrinsics.
+
+**Relation to `Camera.newWidth`/`newHeight`:** the stock `Settings` class has a separate, pre-existing resize (`Settings::readImageInfo` → `System::TrackMonocular`) that scales **non-uniformly** to a fixed `newImSize_` and assumes a fixed input resolution. The target keys here are the uniform, runtime-adaptive replacement; do not set both. `needToResize()` is only triggered by `newWidth/newHeight`, so target-only YAMLs don't hit the `Settings` resize.
+
+**Accessors:** `Tracking::GetTargetSize(w,h)` → `System::GetTargetSize(w,h)` (0,0 when disabled; a single axis may be 0).
+
+**Host (`localization_service_host.cc`):** in target mode the host does **not** resize; it passes native frames to both `calib.processFrame` (so calibration sees the original frame) and `slam.TrackMonocular`. The legacy `imageScale` resize is guarded to the non-target path. `calibration_manager.cc` and `web_server.cc` are unchanged.
+
+When the target keys are unset, the legacy fixed `Camera.imageScale` path (intrinsics scaled at parse time, image resized by the caller) is used exactly as before.
 
 ## Technical Details
 

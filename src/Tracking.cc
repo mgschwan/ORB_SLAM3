@@ -51,6 +51,14 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), mpLastKeyFrame(static_cast<KeyFrame*>(NULL)),
     mMinInitMatches(100)
 {
+    // Target-resolution downscaling keys are read here so they apply to both
+    // config formats (the File.version 1.0 Settings path and the legacy path).
+    {
+        cv::FileStorage fTargetSettings(strSettingPath, cv::FileStorage::READ);
+        if(fTargetSettings.isOpened())
+            ParseTargetResolution(fTargetSettings);
+    }
+
     // Load camera parameters from settings file
     if(settings){
         newParameterLoader(settings);
@@ -730,24 +738,30 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
             mDistCoef.at<float>(4) = node.real();
         }
 
-        node = fSettings["Camera.imageScale"];
-        if(!node.empty() && node.isReal())
-        {
-            mImageScale = node.real();
-        }
-
         if(b_miss_params)
         {
             return false;
         }
 
-        if(mImageScale != 1.f)
+        // In target-resolution mode the intrinsics are kept native (the scaled
+        // camera model is built per-frame in GrabImageMonocular); otherwise the
+        // legacy fixed Camera.imageScale is baked into the intrinsics here.
+        if(!TargetModeActive())
         {
-            // K matrix parameters must be scaled.
-            fx = fx * mImageScale;
-            fy = fy * mImageScale;
-            cx = cx * mImageScale;
-            cy = cy * mImageScale;
+            node = fSettings["Camera.imageScale"];
+            if(!node.empty() && node.isReal())
+            {
+                mImageScale = node.real();
+            }
+
+            if(mImageScale != 1.f)
+            {
+                // K matrix parameters must be scaled.
+                fx = fx * mImageScale;
+                fy = fy * mImageScale;
+                cx = cx * mImageScale;
+                cy = cy * mImageScale;
+            }
         }
 
         vector<float> vCamCalib{fx,fy,cx,cy};
@@ -878,15 +892,19 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
             b_miss_params = true;
         }
 
-        node = fSettings["Camera.imageScale"];
-        if(!node.empty() && node.isReal())
+        // Target-resolution mode keeps intrinsics native (see pinhole branch).
+        if(!TargetModeActive())
         {
-            mImageScale = node.real();
+            node = fSettings["Camera.imageScale"];
+            if(!node.empty() && node.isReal())
+            {
+                mImageScale = node.real();
+            }
         }
 
         if(!b_miss_params)
         {
-            if(mImageScale != 1.f)
+            if(!TargetModeActive() && mImageScale != 1.f)
             {
                 // K matrix parameters must be scaled.
                 fx = fx * mImageScale;
@@ -1580,7 +1598,64 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
 
 Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)
 {
-    mImGray = im;
+    cv::Mat imIn = im;
+
+    // Target-resolution mode: uniformly downscale the (distorted) frame so the
+    // binding side matches the target, and scale the intrinsics by the same
+    // factor. Distortion coefficients are scale-invariant in normalized
+    // coordinates, so they are left unchanged.
+    if(TargetModeActive())
+    {
+        // Capture the native source intrinsics from whichever camera model the
+        // loader built (works for both config formats). Done once, lazily.
+        if(!mbSrcCaptured)
+            CaptureSourceIntrinsics();
+
+        const int fw = im.cols, fh = im.rows;
+
+        if(!mbManualCalib && mCalibWidth > 0 && mCalibHeight > 0
+           && (fw != mCalibWidth || fh != mCalibHeight) && !mbResWarned)
+        {
+            std::cerr << "WARNING: incoming frame resolution " << fw << "x" << fh
+                      << " does not match the calibrated Camera.width/height "
+                      << mCalibWidth << "x" << mCalibHeight
+                      << ". Assuming the frame resolution matches the camera "
+                         "intrinsics." << std::endl;
+            mbResWarned = true;
+        }
+
+        // Uniform scale factor: the binding side reaches the target exactly,
+        // the other side stays smaller (no padding). With both target dims set
+        // the frame fits inside the target box; with one set, that dimension is
+        // scaled to target and the other follows the aspect ratio. A frame
+        // smaller than the target is upscaled so the processing resolution
+        // always matches the target — keeping the extracted feature scale
+        // consistent with the map's descriptors (built at the target
+        // resolution), improving matching and relocalization across cameras.
+        float s;
+        if(mTargetWidth > 0 && mTargetHeight > 0)
+            s = std::min((float)mTargetWidth  / (float)fw,
+                         (float)mTargetHeight / (float)fh);
+        else if(mTargetWidth > 0)
+            s = (float)mTargetWidth  / (float)fw;
+        else
+            s = (float)mTargetHeight / (float)fh;
+
+        if(mbScaleDirty || fw != mLastFrameW || fh != mLastFrameH)
+        {
+            RebuildScaledCamera(s);
+            mLastFrameW = fw;
+            mLastFrameH = fh;
+            mbScaleDirty = false;
+        }
+        mImageScale = s;
+
+        if(s != 1.f)
+            cv::resize(im, imIn,
+                       cv::Size(cvRound(fw * s), cvRound(fh * s)));
+    }
+
+    mImGray = imIn;
     if(mImGray.channels()==3)
     {
         if(mbRGB)
@@ -1613,8 +1688,8 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
             mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth,&mLastFrame,*mpImuCalib);
     }
 
-    if(im.channels() >= 3)
-        mCurrentFrame.mImColor = im.clone();
+    if(imIn.channels() >= 3)
+        mCurrentFrame.mImColor = imIn.clone();
 
     if (mState==NO_IMAGES_YET)
         t0=timestamp;
@@ -4182,6 +4257,25 @@ void Tracking::ChangeCalibration(const string &strSettingPath)
 void Tracking::ChangeCalibration(const cv::Mat &K, const cv::Mat &DistCoef,
                                   unsigned int cameraType)
 {
+    if(TargetModeActive())
+    {
+        // Target-resolution mode: the supplied K is at the camera's native
+        // resolution. Store it as the new source intrinsics; the scaled camera
+        // model is rebuilt lazily in GrabImageMonocular once the frame size is
+        // known. This also runs the rebuild on the tracking thread rather than
+        // the caller's (web server) thread.
+        mSrcFx = (float)K.at<double>(0,0);
+        mSrcFy = (float)K.at<double>(1,1);
+        mSrcCx = (float)K.at<double>(0,2);
+        mSrcCy = (float)K.at<double>(1,2);
+        DistCoef.convertTo(mSrcDistCoef, CV_32F);
+        mSrcCameraType = cameraType;
+        mbSrcCaptured  = true;   // REST K is authoritative; don't re-capture
+        mbManualCalib  = true;   // suppress the resolution-mismatch warning
+        mbScaleDirty   = true;   // force rebuild on the next frame
+        return;
+    }
+
     K.copyTo(mK);
 
     mK_.setIdentity();
@@ -4328,6 +4422,114 @@ void Tracking::SaveSubTrajectory(string strNameFile_frames, string strNameFile_k
 float Tracking::GetImageScale()
 {
     return mImageScale;
+}
+
+void Tracking::GetTargetSize(int &w, int &h)
+{
+    w = mTargetWidth;
+    h = mTargetHeight;
+}
+
+void Tracking::ParseTargetResolution(cv::FileStorage &fSettings)
+{
+    // Camera.width/height   = resolution the intrinsics were calibrated at
+    //                         (used only to detect a mismatch and warn).
+    // Camera.targetWidth/Height = internal processing resolution; when present
+    //                         the intrinsics are kept native and scaled
+    //                         per-frame in GrabImageMonocular.
+    mTargetWidth = mTargetHeight = 0;
+    mCalibWidth  = mCalibHeight  = 0;
+
+    auto readInt = [&](const char* key, int& out) {
+        cv::FileNode n = fSettings[key];
+        if(!n.empty() && n.isReal())     out = (int)n.real();
+        else if(!n.empty() && n.isInt()) out = (int)n;
+    };
+    readInt("Camera.width",        mCalibWidth);
+    readInt("Camera.height",       mCalibHeight);
+    readInt("Camera.targetWidth",  mTargetWidth);
+    readInt("Camera.targetHeight", mTargetHeight);
+
+    // Either or both target dimensions may be given. With both, the frame is
+    // scaled to fit inside the target box (binding side touches it). With only
+    // one, that dimension is scaled to the target and the other follows from
+    // the aspect ratio.
+    if(TargetModeActive())
+        std::cout << "- Target processing resolution: "
+                  << (mTargetWidth  > 0 ? std::to_string(mTargetWidth)  : "auto")
+                  << "x"
+                  << (mTargetHeight > 0 ? std::to_string(mTargetHeight) : "auto")
+                  << std::endl;
+}
+
+void Tracking::CaptureSourceIntrinsics()
+{
+    // Snapshot the native intrinsics from the camera model the loader built.
+    mSrcFx = mpCamera->getParameter(0);
+    mSrcFy = mpCamera->getParameter(1);
+    mSrcCx = mpCamera->getParameter(2);
+    mSrcCy = mpCamera->getParameter(3);
+    mSrcCameraType = mpCamera->GetType();
+
+    if(mSrcCameraType == GeometricCamera::CAM_FISHEYE)
+    {
+        // Fisheye distortion lives in camera params 4-7.
+        mSrcDistCoef = (cv::Mat_<float>(4,1) <<
+                        mpCamera->getParameter(4), mpCamera->getParameter(5),
+                        mpCamera->getParameter(6), mpCamera->getParameter(7));
+    }
+    else
+    {
+        mDistCoef.convertTo(mSrcDistCoef, CV_32F);
+    }
+
+    mbSrcCaptured = true;
+    mbScaleDirty  = true;   // force the first scaled rebuild
+}
+
+void Tracking::RebuildScaledCamera(float s)
+{
+    const float fx = mSrcFx * s, fy = mSrcFy * s;
+    const float cx = mSrcCx * s, cy = mSrcCy * s;
+
+    std::vector<float> vCamCalib{fx, fy, cx, cy};
+
+    if(mSrcCameraType == GeometricCamera::CAM_FISHEYE)
+    {
+        // Distortion coefficients are scale-invariant and live inside the
+        // camera model params (4-7) for the fisheye model.
+        const int nCoeffs = std::min((int)mSrcDistCoef.total(), 4);
+        for(int i = 0; i < nCoeffs; ++i)
+            vCamCalib.push_back(mSrcDistCoef.at<float>(i));
+        while((int)vCamCalib.size() < 8)
+            vCamCalib.push_back(0.f);
+        mpCamera = new KannalaBrandt8(vCamCalib);
+        mDistCoef = cv::Mat::zeros(4, 1, CV_32F);
+    }
+    else
+    {
+        mSrcDistCoef.copyTo(mDistCoef);   // distortion left unchanged
+        mpCamera = new Pinhole(vCamCalib);
+    }
+    mpCamera = mpAtlas->AddCamera(mpCamera);
+
+    mK = cv::Mat::eye(3, 3, CV_32F);
+    mK.at<float>(0,0) = fx;
+    mK.at<float>(1,1) = fy;
+    mK.at<float>(0,2) = cx;
+    mK.at<float>(1,2) = cy;
+
+    mK_.setIdentity();
+    mK_(0,0) = fx;
+    mK_(1,1) = fy;
+    mK_(0,2) = cx;
+    mK_(1,2) = cy;
+
+    Frame::mbInitialComputations = true;
+
+    std::cout << "- Target scale: " << s
+              << " (fx=" << fx << " fy=" << fy
+              << " cx=" << cx << " cy=" << cy << ")" << std::endl;
 }
 
 #ifdef REGISTER_LOOP

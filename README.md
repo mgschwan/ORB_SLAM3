@@ -276,6 +276,29 @@ The merge pipeline is cascaded: a candidate must pass every stage in order. The 
 |-----|------|---------|-------------|
 | *(no YAML key — runtime only)* | — | — | Whether to create a new map when tracking is lost is controlled at runtime via `/allow_new_maps` or the `newmaps_on` / `newmaps_off` console commands. When the service is started in `localize_only` mode this is automatically disabled. |
 
+#### Target processing resolution
+
+Different cameras deliver different resolutions, but SLAM should usually run at one fixed internal resolution. These keys let the service downscale every incoming frame to a target size on the fly, adjusting the camera intrinsics to match — so clients never need to know the internal resolution.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `Camera.targetWidth` | int | *(unset)* | Internal processing width. Every frame is **uniformly** scaled (down or up) so this width is reached, and `fx, fy, cx, cy` are scaled by the same factor. |
+| `Camera.targetHeight` | int | *(unset)* | Internal processing height. May be set on its own, or together with `Camera.targetWidth` to fit the frame inside the `targetWidth × targetHeight` box (binding side touches it, the other side may be smaller — no padding). |
+| `Camera.width` | int | *(unset)* | Resolution the intrinsics were calibrated at (width). Used only to detect a resolution mismatch and warn. |
+| `Camera.height` | int | *(unset)* | Resolution the intrinsics were calibrated at (height). |
+
+You may set **either or both** target dimensions. With one, that side is scaled to the target and the other follows the aspect ratio; with both, the frame is scaled to fit inside the target box.
+
+Behaviour notes:
+
+- **Works with both config formats.** The keys are honoured whether the YAML uses the legacy format or `File.version: "1.0"` (the format the service templates use).
+- **Intrinsics and frames are always native at every interface.** The YAML and the REST calibration endpoints (`/api/calibrate/*`) express intrinsics at the camera's native resolution; chessboard calibration runs on the original (pre-scale) frame. The service scales both the image and the intrinsics together, internally.
+- **Aspect ratios are preserved.** Scaling is a single uniform factor, so features are never squashed. Frames smaller than the target are upscaled so the processing resolution always matches the target — this keeps the query feature scale consistent with the map descriptors (built at the target resolution), aiding relocalization across cameras.
+- **Distortion is untouched.** ORB-SLAM3 monocular undistorts feature *coordinates* after extraction (not the image), and distortion coefficients are scale-invariant in normalized coordinates, so they stay valid after scaling.
+- **Resolution mismatch warning.** If no REST calibration has been applied and an incoming frame's size differs from `Camera.width`/`Camera.height`, the service assumes the frame resolution matches the intrinsics and prints a one-time warning.
+- **Do not combine with `Camera.newWidth`/`newHeight`.** Those keys are a separate, fixed, **non-uniform** resize handled in `Settings`/`System::TrackMonocular`; the target keys here supersede them and should be used instead.
+- When the target keys are unset, the legacy fixed `Camera.imageScale` behaviour is used unchanged.
+
 ## Single-shot localization
 
 A device that needs a one-off position fix (rather than continuous tracking) can use the frame ingest endpoint without running a local camera loop.

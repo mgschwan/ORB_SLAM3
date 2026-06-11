@@ -149,7 +149,17 @@ int main(int argc, char** argv)
     ORB_SLAM3::System slam(args.vocabPath, args.settingsPath, ORB_SLAM3::System::MONOCULAR, true);
     ORB_SLAM3::Verbose::SetTh(ORB_SLAM3::Verbose::VERBOSITY_DEBUG);
     const float imageScale = slam.GetImageScale();
-    std::cout << "Image scale: " << imageScale << "\n";
+    int targetW = 0, targetH = 0;
+    slam.GetTargetSize(targetW, targetH);
+    const bool targetMode = (targetW > 0 || targetH > 0);
+    if (targetMode) {
+        std::cout << "Target processing resolution: "
+                  << (targetW > 0 ? std::to_string(targetW) : "auto") << "x"
+                  << (targetH > 0 ? std::to_string(targetH) : "auto")
+                  << " (frames scaled uniformly inside tracking)\n";
+    } else {
+        std::cout << "Image scale: " << imageScale << "\n";
+    }
 
     // Shared state
     LifecycleFlags     flags;
@@ -264,7 +274,11 @@ int main(int argc, char** argv)
                     now.time_since_epoch()).count());
         }
 
-        if (imageScale != 1.f) {
+        // Legacy fixed image scaling. In target-resolution mode (targetW > 0)
+        // the frame is left at its native size here and downscaled uniformly
+        // inside Tracking::GrabImageMonocular, so calibration below also sees
+        // the original-resolution frame.
+        if (!targetMode && imageScale != 1.f) {
             cv::resize(frame, frame,
                        cv::Size(static_cast<int>(frame.cols * imageScale),
                                 static_cast<int>(frame.rows * imageScale)));

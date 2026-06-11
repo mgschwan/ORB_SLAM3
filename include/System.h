@@ -193,6 +193,10 @@ public:
 
     float GetImageScale();
 
+    // Internal processing resolution for target-resolution downscaling
+    // (0,0 if disabled). Frames are downscaled uniformly inside tracking.
+    void GetTargetSize(int &w, int &h);
+
     Atlas* GetAtlas() { return mpAtlas; }
 
     bool ForceRelocalization();
