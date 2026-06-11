@@ -29,6 +29,7 @@
 #include "localization_service/ingest_queue.h"
 #include "localization_service/espnode_source.h"
 #include "localization_service/calibration_manager.h"
+#include "localization_service/preprocessor.h"
 #include "localization_service/web_server.h"
 
 using namespace localization_service;
@@ -152,6 +153,10 @@ int main(int argc, char** argv)
     int targetW = 0, targetH = 0;
     slam.GetTargetSize(targetW, targetH);
     const bool targetMode = (targetW > 0 || targetH > 0);
+
+    // Frame preprocessing pipeline (CLAHE, etc.) built from the YAML Preproc.* keys.
+    const FramePreprocessor preproc = FramePreprocessor::fromSettingsFile(args.settingsPath);
+    std::cout << preproc.describe() << "\n";
     if (targetMode) {
         std::cout << "Target processing resolution: "
                   << (targetW > 0 ? std::to_string(targetW) : "auto") << "x"
@@ -294,6 +299,11 @@ int main(int argc, char** argv)
             usleep(kPauseSleepUs);
             continue;
         }
+
+        // Preprocess (CLAHE, etc.) the frame fed to tracking. Calibration above
+        // intentionally runs on the raw frame; mapping and localization both see
+        // the preprocessed frame so feature descriptors stay consistent.
+        preproc.process(frame);
 
         // Track
         Sophus::SE3f Tcw = slam.TrackMonocular(frame, tframe);

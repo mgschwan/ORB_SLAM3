@@ -138,6 +138,7 @@ add_executable(localization_service_host
         localization_service/src/ingest_queue.cc
         localization_service/src/espnode_source.cc
         localization_service/src/calibration_manager.cc
+        localization_service/src/preprocessor.cc
         localization_service/src/web_server.cc)
 target_include_directories(localization_service_host PRIVATE
         localization_service/include)

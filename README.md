@@ -299,6 +299,22 @@ Behaviour notes:
 - **Do not combine with `Camera.newWidth`/`newHeight`.** Those keys are a separate, fixed, **non-uniform** resize handled in `Settings`/`System::TrackMonocular`; the target keys here supersede them and should be used instead.
 - When the target keys are unset, the legacy fixed `Camera.imageScale` behaviour is used unchanged.
 
+#### Image preprocessing pipeline
+
+Every frame can be passed through an ordered preprocessing pipeline before it reaches ORB-SLAM3. The pipeline is configured with `Preproc.*` keys and runs in the host (`localization_service_host`), after any calibration capture (which still uses the raw frame) and before tracking.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `Preproc.clahe` | `0`/`1` | `0` | Enable CLAHE (Contrast Limited Adaptive Histogram Equalization). |
+| `Preproc.claheClipLimit` | float | `2.0` | Contrast clip limit; higher = stronger (typical `2.0–4.0`). |
+| `Preproc.claheTileSize` | int | `8` | CLAHE grid is `tiles × tiles` (typical `8`). |
+
+Notes:
+
+- For colour frames CLAHE is applied to the **L (luminance) channel** of LAB, so colour is preserved while the contrast ORB relies on is enhanced; grayscale frames are equalized directly.
+- **Use the same preprocessing for mapping and localization.** Preprocessing changes pixel intensities and therefore ORB descriptors — a map built with CLAHE on should be localized with CLAHE on (and vice versa), or relocalization quality will suffer.
+- The pipeline is extensible: additional steps (denoise, gamma, sharpen, …) can be added later and will run in a fixed order. See `localization_service/src/preprocessor.cc`.
+
 ## Single-shot localization
 
 A device that needs a one-off position fix (rather than continuous tracking) can use the frame ingest endpoint without running a local camera loop.

@@ -69,6 +69,7 @@ ORB_SLAM3/
 │   │   ├── slam_state.cc                - Shared flags and pose state
 │   │   ├── ingest_queue.cc              - IngestQueue push/pop
 │   │   ├── calibration_manager.cc       - Chessboard calibration logic
+│   │   ├── preprocessor.cc              - [CUSTOM] Frame preprocessing pipeline (CLAHE, extensible)
 │   │   └── web_server.cc                - HTTP server and all route handlers
 │   ├── include/localization_service/
 │   │   ├── args.h               - [CUSTOM] ServiceArgs, parseArgs() — all CLI flags
@@ -77,6 +78,7 @@ ORB_SLAM3/
 │   │   ├── ingest_queue.h       - IngestFrame, IngestQueue
 │   │   ├── espnode_source.h     - [CUSTOM] ImuSample, ImuBuffer, EspnodeSource
 │   │   ├── calibration_manager.h
+│   │   ├── preprocessor.h         - [CUSTOM] PreprocessStep, FramePreprocessor
 │   │   └── web_server.h
 │   ├── localization_service_host        - [BUILT EXECUTABLE]
 │   ├── html/
@@ -229,6 +231,7 @@ atlas.to_json_file("debug.json")
 - **KeyFrameDatabase Scope Accuracy:** Fixed a severe bug in `KeyFrameDatabase::DetectRelocalizationCandidates` that allowed Bag-of-Words queries to cross-pollinate with scores from inactive maps. It now properly bounds word scoring to the active map, allowing successful relocalization after switching maps.
 - **Robust LoopClosing:** Ensured `LoopClosing::Run()` still correctly harvests and inserts newly generated `KeyFrames` into the `KeyFrameDatabase` even if the `loopClosing: 0` flag is set in the config. This prevents the database from remaining entirely empty and bricking relocalization functionality.
 - **KeyFrame Culling Safety:** Hardened `KeyFrame::ChangeParent` to tolerate empty spanning trees/deleted parents, mitigating segmentation faults when the local map culler prunes bad KeyFrames post-map-swap.
+- **No map creation / arbitrary timestamps in localization mode:** The timestamp-jump handler in `Tracking::Track()` ([Tracking.cc](src/Tracking.cc), ~line 1913) called `CreateMapInAtlas()` whenever a frame arrived with a timestamp older than the previous frame (and `ResetActiveMap()`/`CreateMapInAtlas()` on large forward jumps for inertial maps). In localization mode this is wrong: a stale/out-of-order timestamp would silently switch the system into map creation. The whole timestamp-jump block is now guarded with `!mbOnlyTracking`, so in localization mode the system never resets/creates a map and tolerates **arbitrary, non-monotonic timestamps** (different devices localizing against the same map). The motion model is pose-based (not divided by `dt`), so out-of-order timestamps don't destabilize it, and tracking falls back to relocalization when temporal continuity breaks. (The other reachable `CreateMapInAtlas()` in `Track()` is already gated by `mState==LOST && !mbOnlyTracking`.)
 - **Null reference-KeyFrame after map switch (segfault fix):** `InformMapSwitch()` deliberately clears `mpReferenceKF` and sets `mState = RECENTLY_LOST` so the tracker relocalizes into the freshly switched/loaded map. But the **localization-mode** branch of `Tracking::Track()` only relocalizes when `mState == LOST`; for `RECENTLY_LOST` with no velocity it called `TrackReferenceKeyFrame()`, which dereferenced the now-null `mpReferenceKF` (`SearchByBoW(pKF=0x0)` → `KeyFrame::GetMapPointMatches(this=0x0)`). This crashed reliably when an atlas was loaded via the web UI **while already in localization mode** (load happens after `ActivateLocalizationMode`, so the first post-load frame hits the null ref). Fix: in the loc-mode branch, relocalize when `mpReferenceKF == nullptr`, and harden `TrackReferenceKeyFrame()` to return `false` on a null reference KF. Unrelated to the target-resolution scaling work (the `- Target scale:` log line merely preceded the crash).
 
 ## Deeper Inspection: Tracking Logic
@@ -319,6 +322,16 @@ Goal: process at one fixed internal resolution regardless of the incoming camera
 **Host (`localization_service_host.cc`):** in target mode the host does **not** resize; it passes native frames to both `calib.processFrame` (so calibration sees the original frame) and `slam.TrackMonocular`. The legacy `imageScale` resize is guarded to the non-target path. `calibration_manager.cc` and `web_server.cc` are unchanged.
 
 When the target keys are unset, the legacy fixed `Camera.imageScale` path (intrinsics scaled at parse time, image resized by the caller) is used exactly as before.
+
+#### Frame preprocessing pipeline (`Preproc.*`)
+
+An extensible, ordered image preprocessing pipeline in the host (`localization_service/src/preprocessor.{h,cc}`), applied to each frame **after** the calibration capture (which keeps using the raw frame) and **before** `slam.TrackMonocular`. Both mapping and localization run through it, so ORB descriptors stay consistent.
+
+- `FramePreprocessor::fromSettingsFile(settingsPath)` opens the YAML and builds the enabled steps from `Preproc.*` keys; `process(cv::Mat&)` runs them in order; `describe()` logs the pipeline at startup. The host builds it once after `System` construction and calls `preproc.process(frame)` before tracking.
+- `PreprocessStep` is the per-step interface (`apply(cv::Mat&)` in place, `describe()`).
+- **CLAHE** (`ClaheStep`) is the first step: `Preproc.clahe` (0/1), `Preproc.claheClipLimit` (default 2.0), `Preproc.claheTileSize` (default 8). Colour frames get CLAHE on the LAB **L channel** (colour preserved); grayscale is equalized directly. Default is **off** unless `Preproc.clahe: 1`, so existing YAMLs are unaffected.
+- **Adding a step later:** implement a `PreprocessStep` subclass in `preprocessor.cc`, then read its `Preproc.*` keys and append it in `fromSettingsFile()` at the desired pipeline position. Add the new `.cc` only if split out; `preprocessor.cc` is already in the `CMakeLists.txt` host target.
+- Caveat: preprocessing alters pixel intensities and therefore descriptors — a map built with a given pipeline must be localized with the same pipeline.
 
 ## Technical Details
 

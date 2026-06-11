@@ -48,6 +48,18 @@ Camera.fps: 20
 Camera.RGB: 1
 
 #--------------------------------------------------------------------------------------------
+# Image Preprocessing (applied to every frame before tracking)
+#--------------------------------------------------------------------------------------------
+# Steps run in a fixed pipeline order. Use the SAME preprocessing for mapping and
+# localization so ORB descriptors stay consistent.
+
+# CLAHE — Contrast Limited Adaptive Histogram Equalization (local contrast boost).
+# Applied to the luminance (L) channel for colour frames; colour is preserved.
+Preproc.clahe: 1            # 0 = off, 1 = on
+Preproc.claheClipLimit: 2.0 # higher = stronger contrast (typical 2.0–4.0)
+Preproc.claheTileSize: 8    # grid is tiles x tiles (typical 8)
+
+#--------------------------------------------------------------------------------------------
 # Tracking Parameters
 #--------------------------------------------------------------------------------------------
 

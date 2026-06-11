@@ -1908,7 +1908,12 @@ void Tracking::Track()
         cout << "ERROR: There is not an active map in the atlas" << endl;
     }
 
-    if(mState!=NO_IMAGES_YET)
+    // Timestamp-jump handling resets or creates maps, so it is skipped entirely
+    // in localization mode: there we must never create/reset a map, and frames
+    // may arrive with arbitrary / out-of-order timestamps (e.g. different
+    // devices localizing against the same map). Tracking falls back to
+    // relocalization on its own when temporal continuity is broken.
+    if(mState!=NO_IMAGES_YET && !mbOnlyTracking)
     {
         if(mLastFrame.mTimeStamp>mCurrentFrame.mTimeStamp)
         {
