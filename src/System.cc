@@ -507,12 +507,18 @@ void System::ActivateLocalizationMode()
 {
     unique_lock<mutex> lock(mMutexMode);
     mbActivateLocalizationMode = true;
+    // Cancel any pending (not-yet-consumed) deactivation so the latest request
+    // wins. Otherwise a stale deactivate (e.g. left over from a temporary
+    // localization toggle during atlas export) would be processed in the same
+    // frame right after this activation and silently revert to mapping mode.
+    mbDeactivateLocalizationMode = false;
 }
 
 void System::DeactivateLocalizationMode()
 {
     unique_lock<mutex> lock(mMutexMode);
     mbDeactivateLocalizationMode = true;
+    mbActivateLocalizationMode = false;
 }
 
 bool System::MapChanged()
