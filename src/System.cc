@@ -1429,6 +1429,16 @@ void System::SetAllowMapCreation(bool allow)
     mpTracker->SetAllowMapCreation(allow);
 }
 
+void System::SetUseMotionModel(bool enable)
+{
+    mpTracker->SetUseMotionModel(enable);
+}
+
+bool System::GetUseMotionModel()
+{
+    return mpTracker->GetUseMotionModel();
+}
+
 void System::SetNextFramePose(const Sophus::SE3f& Tcw)
 {
     mpTracker->SetNextFramePose(Tcw);

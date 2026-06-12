@@ -31,6 +31,7 @@ public:
               CalibrationManager& calib,
               std::atomic<bool>&  localizationMode,
               std::atomic<bool>&  allowMapCreation,
+              std::atomic<bool>&  useMotionModel,
               long unsigned int   initialMapId,
               IngestQueue*        ingestQueue,       // nullptr → /api/frame disabled
               std::string         staticFileRoot = kStaticFileRoot,
@@ -116,6 +117,7 @@ private:
     CalibrationManager& calib_;
     std::atomic<bool>&  localizationMode_;
     std::atomic<bool>&  allowMapCreation_;
+    std::atomic<bool>&  useMotionModel_;
     long unsigned int   initialMapId_;
     IngestQueue*        ingestQueue_;
     std::string         staticFileRoot_;

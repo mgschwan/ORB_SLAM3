@@ -208,6 +208,12 @@ public:
     // When allow=true (the default) the original upstream behaviour is restored.
     void SetAllowMapCreation(bool allow);
 
+    // Enable/disable the constant-velocity motion model (both mapping and
+    // localization). When disabled, frames are tracked from the last pose and
+    // relocalized in-frame on failure. Default follows Tracking.useMotionModel.
+    void SetUseMotionModel(bool enable);
+    bool GetUseMotionModel();
+
     // Inject an external pose for the next frame submitted to TrackMonocular.
     // The tracker will skip feature-based prediction and PoseOptimization for
     // that frame; TrackLocalMap still runs for map-point association.

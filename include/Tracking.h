@@ -196,6 +196,17 @@ public:
     bool mbAllowMapCreation;
     void SetAllowMapCreation(bool allow) { mbAllowMapCreation = allow; }
 
+    // Constant-velocity motion model toggle. When true (default, original
+    // behaviour) pose prediction extrapolates the last inter-frame motion via
+    // TrackWithMotionModel(). When false, every frame is instead tracked from
+    // the last known pose (TrackReferenceKeyFrame) and, if that fails, a global
+    // relocalization is attempted in the same frame. Useful when frames are far
+    // apart (the velocity extrapolation overshoots). Applies to both mapping and
+    // localization modes. Configurable via the Tracking.useMotionModel YAML key.
+    bool mbUseMotionModel;
+    void SetUseMotionModel(bool enable) { mbUseMotionModel = enable; }
+    bool GetUseMotionModel() const { return mbUseMotionModel; }
+
     // Inject an external pose for the next frame.  When set, Tracking skips
     // its feature-based estimator and PoseOptimization for that frame.
     // TrackLocalMap still runs for map-point association.

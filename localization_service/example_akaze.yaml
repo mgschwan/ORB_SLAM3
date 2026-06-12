@@ -66,6 +66,11 @@ Preproc.claheTileSize: 8
 Tracking.minInitMatches: 50
 Tracking.forcedPoseMinBaseline: 0.08
 
+# Constant-velocity motion model (1 = on, default; 0 = off). Off = track from the
+# last pose and relocalize in-frame on failure (better for far-apart frames).
+# Also toggleable at runtime via the web UI / /use_motion_model / motion_on|off.
+Tracking.useMotionModel: 1
+
 #--------------------------------------------------------------------------------------------
 # Feature type selection
 #--------------------------------------------------------------------------------------------

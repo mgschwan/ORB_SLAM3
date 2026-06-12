@@ -35,6 +35,7 @@
         <div style="margin-top:20px;">
             <button class="btn" style="background:#ffc107;color:#333;" onclick="sendCommand('/newmap')">Create New Map</button>
             <button id="btn-allow-newmaps" class="btn" onclick="toggleMapCreation()">Allow New Maps: ?</button>
+            <button id="btn-motion-model" class="btn" onclick="toggleMotionModel()">Motion Model: ?</button>
         </div>
         <hr>
         <h3>Saved Calibrations</h3>
@@ -63,6 +64,7 @@
     <script>
         let isPaused = false;
         let allowMapCreation = true;
+        let motionModel = true;
 
         async function downloadAtlas() {
             document.getElementById('atlas-status').textContent = "Exporting atlas... please wait.";
@@ -162,6 +164,21 @@
                     btnAllow.style.borderColor = "#dc3545";
                 }
 
+                // Update Motion Model button
+                const btnMotion = document.getElementById('btn-motion-model');
+                motionModel = data.useMotionModel;
+                if (motionModel) {
+                    btnMotion.textContent = "Motion Model: ON";
+                    btnMotion.style.background = "#28a745";
+                    btnMotion.style.color = "white";
+                    btnMotion.style.borderColor = "#28a745";
+                } else {
+                    btnMotion.textContent = "Motion Model: OFF";
+                    btnMotion.style.background = "#dc3545";
+                    btnMotion.style.color = "white";
+                    btnMotion.style.borderColor = "#dc3545";
+                }
+
                 // Update Maps Table
                 let mapsHtml = '<table><tr><th>Map ID</th><th>KeyFrames</th><th>MapPoints</th><th>Action</th></tr>';
                 data.maps.forEach((map, idx) => {
@@ -199,6 +216,11 @@
         function toggleMapCreation() {
             const enable = !allowMapCreation;
             sendCommand('/allow_new_maps?enable=' + (enable ? 'true' : 'false'));
+        }
+
+        function toggleMotionModel() {
+            const enable = !motionModel;
+            sendCommand('/use_motion_model?enable=' + (enable ? 'true' : 'false'));
         }
 
         function togglePause() {

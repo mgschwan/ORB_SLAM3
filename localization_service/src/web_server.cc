@@ -32,6 +32,7 @@ WebServer::WebServer(ORB_SLAM3::System&  slam,
                      CalibrationManager& calib,
                      std::atomic<bool>&  localizationMode,
                      std::atomic<bool>&  allowMapCreation,
+                     std::atomic<bool>&  useMotionModel,
                      long unsigned int   initialMapId,
                      IngestQueue*        ingestQueue,
                      std::string         staticFileRoot,
@@ -42,6 +43,7 @@ WebServer::WebServer(ORB_SLAM3::System&  slam,
     , calib_(calib)
     , localizationMode_(localizationMode)
     , allowMapCreation_(allowMapCreation)
+    , useMotionModel_(useMotionModel)
     , initialMapId_(initialMapId)
     , ingestQueue_(ingestQueue)
     , staticFileRoot_(std::move(staticFileRoot))
@@ -708,6 +710,7 @@ bool WebServer::routeControl(const std::string& req, std::string& response)
         std::string json = "{";
         json += "\"localizationMode\":"  + std::string(localizationMode_   ? "true" : "false") + ",";
         json += "\"allowMapCreation\":"  + std::string(allowMapCreation_   ? "true" : "false") + ",";
+        json += "\"useMotionModel\":"    + std::string(useMotionModel_     ? "true" : "false") + ",";
         json += "\"paused\":"            + std::string(flags_.paused       ? "true" : "false") + ",";
         json += "\"currentMapId\":"      + std::to_string(currentMapId)    + ",";
         json += "\"maps\":[";
@@ -776,6 +779,14 @@ bool WebServer::routeControl(const std::string& req, std::string& response)
         allowMapCreation_ = enable;
         slam_.SetAllowMapCreation(enable);
         std::cout << ">>> [Web] Map creation on tracking loss: "
+                  << (enable ? "ENABLED" : "DISABLED") << " <<<\n";
+        response = makeOkText();
+
+    } else if (req.find("GET /use_motion_model?enable=") != std::string::npos) {
+        const bool enable = (req.find("enable=true") != std::string::npos);
+        useMotionModel_ = enable;
+        slam_.SetUseMotionModel(enable);
+        std::cout << ">>> [Web] Constant-velocity motion model: "
                   << (enable ? "ENABLED" : "DISABLED") << " <<<\n";
         response = makeOkText();
 

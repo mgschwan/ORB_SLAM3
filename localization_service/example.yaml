@@ -70,6 +70,14 @@ Tracking.minInitMatches: 50
 
 Tracking.forcedPoseMinBaseline: 0.08
 
+# Constant-velocity motion model (1 = on, default; 0 = off). When off, each frame
+# is tracked from the last known pose and relocalized in-frame on failure instead
+# of extrapolating the previous motion — useful when frames are far apart (sparse
+# capture), where velocity extrapolation overshoots. Also toggleable at runtime
+# via the web UI (Motion Model button), /use_motion_model?enable=, or the
+# motion_on / motion_off console commands. Applies to mapping and localization.
+Tracking.useMotionModel: 1
+
 #--------------------------------------------------------------------------------------------
 # ORB Parameters
 #--------------------------------------------------------------------------------------------

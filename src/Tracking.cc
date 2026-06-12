@@ -66,6 +66,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mAkazeNOctaves = 4;
     mAkazeNOctaveLayers = 4;
     mAkazeDescriptorSize = 256;
+    mbUseMotionModel = true;
     {
         cv::FileStorage fFeatSettings(strSettingPath, cv::FileStorage::READ);
         if(fFeatSettings.isOpened())
@@ -73,6 +74,10 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
             cv::FileNode fnFeat = fFeatSettings["Feature.type"];
             if(!fnFeat.empty() && fnFeat.isString())
                 mFeatureType = FeatureTypeFromString((string)fnFeat);
+
+            cv::FileNode fnMM = fFeatSettings["Tracking.useMotionModel"];
+            if(!fnMM.empty() && fnMM.isInt())
+                mbUseMotionModel = ((int)fnMM != 0);
 
             cv::FileNode fnTh = fFeatSettings["AKAZE.threshold"];
             if(!fnTh.empty() && fnTh.isReal())
@@ -89,6 +94,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
         }
     }
     cout << "- Feature type: " << FeatureTypeName(mFeatureType) << endl;
+    cout << "- Motion model: " << (mbUseMotionModel ? "on" : "off") << endl;
     if(mFeatureType == FeatureType::AKAZE)
         cout << "- AKAZE: threshold=" << mAkazeThreshold
              << " nOctaves=" << mAkazeNOctaves
@@ -2100,7 +2106,7 @@ void Tracking::Track()
                 // Local Mapping might have changed some MapPoints tracked in last frame
                 CheckReplacedInLastFrame();
 
-                if((!mbVelocity && !pCurrentMap->isImuInitialized()) || mCurrentFrame.mnId<mnLastRelocFrameId+2)
+                if((!mbVelocity && !pCurrentMap->isImuInitialized()) || mCurrentFrame.mnId<mnLastRelocFrameId+2 || !mbUseMotionModel)
                 {
                     Verbose::PrintMess("TRACK: Track with respect to the reference KF ", Verbose::VERBOSITY_DEBUG);
                     bOK = TrackReferenceKeyFrame();
@@ -2113,6 +2119,11 @@ void Tracking::Track()
                         bOK = TrackReferenceKeyFrame();
                 }
 
+                // Motion model disabled: if tracking from the last pose failed,
+                // relocalize globally in this same frame instead of waiting for
+                // the RECENTLY_LOST path on the next frame.
+                if(!bOK && !mbUseMotionModel)
+                    bOK = Relocalization();
 
                 if (!bOK)
                 {
@@ -2212,19 +2223,28 @@ void Tracking::Track()
                         bOK = Relocalization();
                     }
                     // In last frame we tracked enough MapPoints in the map
-                    else if(mbVelocity)
+                    else if(mbVelocity && mbUseMotionModel)
                     {
                         bOK = TrackWithMotionModel();
                     }
                     else
                     {
+                        // No motion model (or it is disabled): track from the last
+                        // known pose against the reference keyframe.
                         bOK = TrackReferenceKeyFrame();
                     }
 
                     // MODIFIED: If tracking is weak, immediately switch to VO mode
                     // but also consider if we've drifted too much.
                     if (!bOK) {
-                        mbVO = true;
+                        // Motion model disabled: try a global relocalization in the
+                        // same frame before falling back to VO, so a frame that
+                        // cannot be tracked from the last pose is re-located rather
+                        // than extrapolated.
+                        if(!mbUseMotionModel)
+                            bOK = Relocalization();
+                        if(!bOK)
+                            mbVO = true;
                     }
                 }
                 else
@@ -2246,7 +2266,7 @@ void Tracking::Track()
                         // In localization mode, we try to maintain a VO track to stay "active".
                         // However, if the VO track fails, we fall back to pure relocalization.
                         bool bOKMM = false;
-                        if(mbVelocity)
+                        if(mbVelocity && mbUseMotionModel)
                         {
                             bOKMM = TrackWithMotionModel();
                         }

@@ -50,6 +50,7 @@ static void handleStdinCommand(const std::string&  command,
                                 LifecycleFlags&     flags,
                                 std::atomic<bool>&  localizationMode,
                                 std::atomic<bool>&  allowMapCreation,
+                                std::atomic<bool>&  useMotionModel,
                                 long unsigned int   mapId)
 {
     if (command == "loc" || command == "localize") {
@@ -74,6 +75,14 @@ static void handleStdinCommand(const std::string&  command,
         allowMapCreation = false;
         slam.SetAllowMapCreation(false);
         std::cout << ">>> Map creation on tracking loss: DISABLED <<<\n";
+    } else if (command == "motion_on") {
+        useMotionModel = true;
+        slam.SetUseMotionModel(true);
+        std::cout << ">>> Constant-velocity motion model: ENABLED <<<\n";
+    } else if (command == "motion_off") {
+        useMotionModel = false;
+        slam.SetUseMotionModel(false);
+        std::cout << ">>> Constant-velocity motion model: DISABLED <<<\n";
     } else if (command == "pause") {
         flags.paused = true;
         std::cout << ">>> Paused Processing <<<\n";
@@ -172,6 +181,8 @@ int main(int argc, char** argv)
     IngestQueue        ingestQueue;
     std::atomic<bool>  localizationMode{false};
     std::atomic<bool>  allowMapCreation{true};
+    // Initial state follows the Tracking.useMotionModel YAML key (default on).
+    std::atomic<bool>  useMotionModel{slam.GetUseMotionModel()};
 
     if (args.localizeOnly) {
         std::cout << "Activating localization mode\n";
@@ -201,7 +212,7 @@ int main(int argc, char** argv)
     // Components
     CalibrationManager calib(slam);
     WebServer          server(slam, flags, pose, calib, localizationMode, allowMapCreation,
-                              args.mapId, useIngest ? &ingestQueue : nullptr,
+                              useMotionModel, args.mapId, useIngest ? &ingestQueue : nullptr,
                               staticFileRoot, args.port);
 
     // Control thread: HTTP server + stdin commands
@@ -223,7 +234,7 @@ int main(int argc, char** argv)
                     && FD_ISSET(STDIN_FILENO, &fds)) {
                     std::string cmd;
                     if (std::cin >> cmd)
-                        handleStdinCommand(cmd, slam, flags, localizationMode, allowMapCreation, args.mapId);
+                        handleStdinCommand(cmd, slam, flags, localizationMode, allowMapCreation, useMotionModel, args.mapId);
                 }
             }
         });
