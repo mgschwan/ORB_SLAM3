@@ -296,7 +296,7 @@ When activated via `SLAM.ActivateLocalizationMode()`:
     - Passing `none` as the camera source uses the `IngestQueue` path; frames are supplied via `POST /api/frame`.
     - Passing `espnode` auto-discovers the ESP32 via UDP and opens a persistent TCP session (`EspnodeSource`). Frames arrive via trigger-response; IMU data streams continuously into `ImuBuffer` and is drained once per tracking frame.
     - Acts as an asynchronous Web Interface for manual control over SLAM operations.
-    - Features endpoints for REST API Status (`/api/status`) serving JSON variables, action endpoints (`/pause`, `/resume`, `/newmap`, `/switchmap?id=X`), and safely serves static frontend assets (HTML, CSS, JS) directly out of `localization_service/html/`.
+    - Features endpoints for REST API Status (`/api/status`) serving JSON variables, action endpoints (`/pause`, `/resume`, `/newmap`, `/switchmap?id=X`, `/allow_new_maps?enable=`, `/use_motion_model?enable=`), and safely serves static frontend assets (HTML, CSS, JS) directly out of `localization_service/html/`.
     - Frame ingest endpoint `POST /api/frame`: accepts a raw JPEG body and optional `ts`/IMU query parameters. Returns a JSON response with `queued`, `tracking_state`, and `pose` fields. An empty-body POST skips frame submission and returns the current pose snapshot — used for polling after a frame has been queued.
 
 - **`localization_service/tools/send_camera_frames.py`**:
@@ -307,6 +307,7 @@ When activated via `SLAM.ActivateLocalizationMode()`:
 ### 5. Configuration & Settings
 - **Loop Closing Toggle:** Added support for a `loopClosing` flag in the YAML settings file to enable/disable the Loop Closing thread.
 - **Swappable feature extractor:** New `Feature.type` YAML key (`ORB` | `AKAZE`) selects the feature detector/descriptor for the whole atlas. See the dedicated subsection below.
+- **Motion-model toggle:** New `Tracking.useMotionModel` YAML key (default `1`) plus a runtime switch to disable the constant-velocity motion model. See the dedicated subsection below.
 - **Image Scaling:** Improved handling of image scaling in the examples to match the SLAM system's expectations.
 - **Target Processing Resolution (dynamic scaling):** New `Camera.targetWidth` / `Camera.targetHeight` YAML keys. When set, incoming frames of any resolution are uniformly scaled to the target *inside* `Tracking::GrabImageMonocular`, so the service can accept different cameras without per-camera tuning. Works with both config formats. See below.
 
@@ -341,6 +342,21 @@ An extensible, ordered image preprocessing pipeline in the host (`localization_s
 - **CLAHE** (`ClaheStep`) is the first step: `Preproc.clahe` (0/1), `Preproc.claheClipLimit` (default 2.0), `Preproc.claheTileSize` (default 8). Colour frames get CLAHE on the LAB **L channel** (colour preserved); grayscale is equalized directly. Default is **off** unless `Preproc.clahe: 1`, so existing YAMLs are unaffected.
 - **Adding a step later:** implement a `PreprocessStep` subclass in `preprocessor.cc`, then read its `Preproc.*` keys and append it in `fromSettingsFile()` at the desired pipeline position. Add the new `.cc` only if split out; `preprocessor.cc` is already in the `CMakeLists.txt` host target.
 - Caveat: preprocessing alters pixel intensities and therefore descriptors — a map built with a given pipeline must be localized with the same pipeline.
+
+#### Motion-model toggle (`Tracking.useMotionModel`)
+
+The constant-velocity motion model predicts the next pose as `mVelocity * mLastFrame.pose` (where `mVelocity` is the relative transform between the last two frames) and then only searches for matches near that prediction (`TrackWithMotionModel` → `SearchByProjection`). With **far-apart frames** the constant-velocity assumption breaks and the prediction overshoots; worse, right after a `Relocalization()` the velocity is recomputed from the *previous* (stale/wrong) frame pose, so **the frame following a correct relocalization is often placed completely wrong**.
+
+`Tracking::mbUseMotionModel` (default **true**) gates this. When **false**:
+- Every frame is tracked from the **last known pose** via `TrackReferenceKeyFrame()` (which seeds `mCurrentFrame.SetPose(mLastFrame.GetPose())` and matches against the reference keyframe by BoW), then refined by `TrackLocalMap()`.
+- If reference-keyframe tracking fails, a global `Relocalization()` is attempted **in the same frame** (the "enhanced" fallback) rather than waiting for the next frame's RECENTLY_LOST/VO path.
+- Applies to **both** branches of `Tracking::Track()` — mapping (`!mbOnlyTracking`, ~line 2103) and localization (`mbOnlyTracking`, ~line 2215) — and the VO-recovery motion-model fallback is likewise skipped. The external/forced-pose path (`mbHasForcedPose`) is unaffected (it bypasses prediction entirely).
+
+**Plumbing** (mirrors the `allow_new_maps` toggle end-to-end):
+- `Tracking`: `mbUseMotionModel` + `SetUseMotionModel`/`GetUseMotionModel`; read from `Tracking.useMotionModel` in the constructor (same block as `Feature.type`, so it applies to both config formats).
+- `System`: `SetUseMotionModel` / `GetUseMotionModel` passthrough.
+- Host (`localization_service_host.cc`): `std::atomic<bool> useMotionModel{slam.GetUseMotionModel()}` (seeded from the YAML), passed to `WebServer`; `motion_on` / `motion_off` stdin commands.
+- Web (`web_server.cc`): `GET /use_motion_model?enable=true|false`; `useMotionModel` field in `/api/status`. UI: a **Motion Model** toggle button in `html/index.html`.
 
 #### Swappable feature extractor (`Feature.type`: `ORB` | `AKAZE`)
 

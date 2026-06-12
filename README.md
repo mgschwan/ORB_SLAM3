@@ -142,6 +142,7 @@ All endpoints are served on port **11142**.
 | `GET` | `/switchmap?id=N` | Switch active map to id `N` |
 | `GET` | `/newmap` | Create and switch to a new empty map |
 | `GET` | `/allow_new_maps?enable=true\|false` | Enable or disable automatic new-map creation when tracking is lost |
+| `GET` | `/use_motion_model?enable=true\|false` | Enable or disable the constant-velocity motion model (see [Motion model](#motion-model)) |
 
 `/api/status` response:
 
@@ -149,6 +150,7 @@ All endpoints are served on port **11142**.
 {
   "localizationMode": false,
   "allowMapCreation": true,
+  "useMotionModel": true,
   "paused": false,
   "currentMapId": 1,
   "maps": [
@@ -241,6 +243,8 @@ While the service is running, commands can be typed directly in the terminal:
 | `map` / `mapping` | Switch to mapping mode |
 | `newmaps_on` | Enable automatic new-map creation on tracking loss |
 | `newmaps_off` | Disable automatic new-map creation (continuously retry relocalization instead) |
+| `motion_on` | Enable the constant-velocity motion model |
+| `motion_off` | Disable the motion model (track from the last pose, relocalize in-frame on failure) |
 | `pause` | Pause processing |
 | `resume` | Resume processing |
 | `quit` / `exit` | Shut down cleanly |
@@ -310,6 +314,20 @@ Standard ORB-SLAM3 keys controlling the ORB feature extractor. They are read whe
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | *(no YAML key — runtime only)* | — | — | Whether to create a new map when tracking is lost is controlled at runtime via `/allow_new_maps` or the `newmaps_on` / `newmaps_off` console commands. When the service is started in `localize_only` mode this is automatically disabled. |
+
+#### Motion model
+
+The constant-velocity motion model predicts each frame's pose by extrapolating the motion between the previous two frames, then searches for feature matches near that prediction.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `Tracking.useMotionModel` | `0` / `1` | `1` | Enable (`1`) or disable (`0`) the constant-velocity motion model. Applies to both mapping and localization. |
+
+When **disabled**, every frame is instead tracked from the **last known pose** (matched against the reference keyframe); if that fails, a global relocalization is attempted **in the same frame**.
+
+Disable it when frames are **far apart** (sparse capture). With large gaps between frames the constant-velocity assumption breaks and the extrapolated prediction overshoots — and immediately after a relocalization the velocity is derived from a stale previous pose, so the frame following a correct relocalization is often placed completely wrong. Tracking from the last pose avoids both failure modes.
+
+Toggle at runtime with the **Motion Model** button in the web UI, the `/use_motion_model?enable=true|false` endpoint, or the `motion_on` / `motion_off` console commands. The current state is reported as `useMotionModel` in `/api/status`.
 
 #### Target processing resolution
 
