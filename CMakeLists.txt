@@ -61,6 +61,7 @@ src/LocalMapping.cc
 src/LoopClosing.cc
 src/ORBextractor.cc
 src/FeatureExtractor.cc
+src/AkazeExtractor.cc
 src/ORBmatcher.cc
 src/FrameDrawer.cc
 src/Converter.cc

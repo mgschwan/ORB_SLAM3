@@ -8,6 +8,7 @@
 
 #include "FeatureExtractor.h"
 #include "ORBextractor.h"
+#include "AkazeExtractor.h"
 
 #include <cctype>
 #include <iostream>
@@ -39,7 +40,10 @@ FeatureType FeatureTypeFromString(const std::string& s)
 
 FeatureExtractor* CreateFeatureExtractor(FeatureType type,
                                          int nfeatures, float scaleFactor,
-                                         int nlevels, int iniThFAST, int minThFAST)
+                                         int nlevels, int iniThFAST, int minThFAST,
+                                         float akazeThreshold,
+                                         int akazeNOctaves,
+                                         int akazeNOctaveLayers)
 {
     switch(type)
     {
@@ -47,6 +51,8 @@ FeatureExtractor* CreateFeatureExtractor(FeatureType type,
             return new ORBextractor(nfeatures, scaleFactor, nlevels, iniThFAST, minThFAST);
 
         case FeatureType::AKAZE:
+            return new AkazeExtractor(nfeatures, akazeThreshold, akazeNOctaves, akazeNOctaveLayers);
+
         case FeatureType::SIFT:
         default:
             std::cerr << "[FeatureExtractor] Feature type '" << FeatureTypeName(type)

@@ -320,6 +320,11 @@ protected:
     FeatureExtractor* mpIniORBextractor;
     FeatureType mFeatureType;
 
+    // AKAZE detector parameters (read from optional AKAZE.* YAML keys).
+    float mAkazeThreshold;
+    int mAkazeNOctaves;
+    int mAkazeNOctaveLayers;
+
     //BoW
     ORBVocabulary* mpORBVocabulary;
     KeyFrameDatabase* mpKeyFrameDB;

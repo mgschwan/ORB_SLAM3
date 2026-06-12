@@ -59,12 +59,17 @@ public:
     std::vector<cv::Mat> mvImagePyramid;
 };
 
-// Factory: build the extractor for the requested feature type. Parameter
-// semantics follow the ORB extractor (nfeatures, scaleFactor, nlevels,
-// iniThFAST, minThFAST); other implementations reinterpret them as needed.
+// Factory: build the extractor for the requested feature type. The first group
+// of parameters follows the ORB extractor (nfeatures, scaleFactor, nlevels,
+// iniThFAST, minThFAST). The trailing akaze* parameters configure the AKAZE
+// scale space / detector and are ignored by other feature types (so existing
+// ORB call sites are unaffected by the defaults).
 FeatureExtractor* CreateFeatureExtractor(FeatureType type,
                                          int nfeatures, float scaleFactor,
-                                         int nlevels, int iniThFAST, int minThFAST);
+                                         int nlevels, int iniThFAST, int minThFAST,
+                                         float akazeThreshold = 0.001f,
+                                         int akazeNOctaves = 4,
+                                         int akazeNOctaveLayers = 4);
 
 } // namespace ORB_SLAM3
 

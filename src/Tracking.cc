@@ -62,6 +62,9 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     // Feature/descriptor type. Read here so it applies to both config formats.
     // Defaults to ORB when the key is absent (backward compatible).
     mFeatureType = FeatureType::ORB;
+    mAkazeThreshold = 0.001f;
+    mAkazeNOctaves = 4;
+    mAkazeNOctaveLayers = 4;
     {
         cv::FileStorage fFeatSettings(strSettingPath, cv::FileStorage::READ);
         if(fFeatSettings.isOpened())
@@ -69,9 +72,23 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
             cv::FileNode fnFeat = fFeatSettings["Feature.type"];
             if(!fnFeat.empty() && fnFeat.isString())
                 mFeatureType = FeatureTypeFromString((string)fnFeat);
+
+            cv::FileNode fnTh = fFeatSettings["AKAZE.threshold"];
+            if(!fnTh.empty() && fnTh.isReal())
+                mAkazeThreshold = (float)fnTh.real();
+            cv::FileNode fnOct = fFeatSettings["AKAZE.nOctaves"];
+            if(!fnOct.empty() && fnOct.isInt())
+                mAkazeNOctaves = (int)fnOct;
+            cv::FileNode fnLay = fFeatSettings["AKAZE.nOctaveLayers"];
+            if(!fnLay.empty() && fnLay.isInt())
+                mAkazeNOctaveLayers = (int)fnLay;
         }
     }
     cout << "- Feature type: " << FeatureTypeName(mFeatureType) << endl;
+    if(mFeatureType == FeatureType::AKAZE)
+        cout << "- AKAZE: threshold=" << mAkazeThreshold
+             << " nOctaves=" << mAkazeNOctaves
+             << " nOctaveLayers=" << mAkazeNOctaveLayers << endl;
 
     // Load camera parameters from settings file
     if(settings){
@@ -619,13 +636,13 @@ void Tracking::newParameterLoader(Settings *settings) {
     int fMinThFAST = settings->minThFAST();
     float fScaleFactor = settings->scaleFactor();
 
-    mpORBextractorLeft = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+    mpORBextractorLeft = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
-        mpORBextractorRight = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpORBextractorRight = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
 
     if(mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR)
-        mpIniORBextractor = CreateFeatureExtractor(mFeatureType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpIniORBextractor = CreateFeatureExtractor(mFeatureType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
 
     //IMU parameters
     Sophus::SE3f Tbc = settings->Tbc();
@@ -1324,13 +1341,13 @@ bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
         return false;
     }
 
-    mpORBextractorLeft = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+    mpORBextractorLeft = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
-        mpORBextractorRight = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpORBextractorRight = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
 
     if(mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR)
-        mpIniORBextractor = CreateFeatureExtractor(mFeatureType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpIniORBextractor = CreateFeatureExtractor(mFeatureType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
 
     cout << endl << "ORB Extractor Parameters: " << endl;
     cout << "- Number of Features: " << nFeatures << endl;
