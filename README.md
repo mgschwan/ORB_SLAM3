@@ -40,16 +40,17 @@ mkdir -p build && cd build
 cmake ..
 ninja localization_service_host   # or: make -j4 localization_service_host
 
-# Optionally build the OSA conversion tool
-ninja osa_convert
+# Optionally build the OSA conversion tool and the AKAZE vocabulary trainer
+ninja osa_convert akaze_vocab_trainer
 ```
 
-The main binary is output to `localization_service/localization_service_host`. The OSA tool is output to `localization_service/tools/osa_convert`.
+The main binary is output to `localization_service/localization_service_host`. The tools are output to `localization_service/tools/`.
 
-You also need the ORB vocabulary file:
+You also need the vocabulary file for the feature type you use:
 
 ```bash
-cd Vocabulary && tar -xf ORBvoc.txt.tar.gz
+cd Vocabulary && tar -xf ORBvoc.txt.tar.gz      # ORB (default)
+cd Vocabulary && tar -xf AKAZEvoc.txt.tar.gz    # AKAZE (Feature.type: "AKAZE")
 ```
 
 ## Running
@@ -270,6 +271,28 @@ The following keys extend the standard ORB-SLAM3 settings file with project-spec
 
 The merge pipeline is cascaded: a candidate must pass every stage in order. The Sim3 and projection stages remain strict even when the BoW thresholds are lowered, so false-positive merges are unlikely. Additionally, a merge is only triggered after **3 consecutive keyframes** all pass the full pipeline.
 
+#### Feature extractor (ORB / AKAZE)
+
+The feature detector/descriptor is swappable. A map uses **one uniform feature type**, selected with `Feature.type` and recorded in the saved `.osa` so a map is always localized with the type it was built with.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `Feature.type` | `"ORB"` / `"AKAZE"` | `"ORB"` | Feature detector & descriptor for the whole atlas. |
+| `AKAZE.threshold` | float | `0.001` | AKAZE detector response threshold (lower = more keypoints). AKAZE only. |
+| `AKAZE.descriptorSize` | int | `256` | M-LDB descriptor size in bits. `256` → 32-byte (ORB-compatible, reuses the DBoW2 vocabulary format); `0` → full 486-bit. AKAZE only. |
+| `AKAZE.nOctaves` | int | `4` | AKAZE scale-space octaves (also the number of pyramid levels). AKAZE only. |
+| `AKAZE.nOctaveLayers` | int | `4` | AKAZE sub-octave layers. AKAZE only. |
+
+When `Feature.type` is `"AKAZE"`, `ORBextractor.nFeatures` is still read and acts as the per-image keypoint cap (strongest *N* kept); the other `ORBextractor.*` keys are ignored.
+
+**You must pass the matching vocabulary** as the first argument: `Vocabulary/ORBvoc.txt` for ORB, `Vocabulary/AKAZEvoc.txt` for AKAZE. The AKAZE vocabulary is trained with `localization_service/tools/akaze_vocab_trainer` (see [Training an AKAZE vocabulary](#training-an-akaze-vocabulary)); the `AKAZE.*` parameters used at runtime **must match** those used during training, or relocalization quality will suffer. See `localization_service/example_akaze.yaml` for a ready-made AKAZE config.
+
+```bash
+# Mapping / localization with AKAZE
+./localization_service/localization_service_host \
+    Vocabulary/AKAZEvoc.txt  localization_service/example_akaze.yaml  /dev/video0
+```
+
 #### Map creation behaviour
 
 | Key | Type | Default | Description |
@@ -423,6 +446,42 @@ atlas = OsaAtlas.new("ORBvoc.txt", "checksum")
 
 These tools are the foundation for an offline atlas-construction pipeline that can build higher-quality maps from a directory of images using techniques not available in the real-time tracker.
 
+## Training an AKAZE vocabulary
+
+Bag-of-Words place recognition (relocalization and loop closing) needs a vocabulary trained for the feature type in use. The shipped `Vocabulary/ORBvoc.txt` is for ORB; for AKAZE, train one with `akaze_vocab_trainer`. Because AKAZE is run at 256-bit (`AKAZE.descriptorSize: 256`), the descriptors are ORB-compatible and the trained vocabulary uses the **same DBoW2 text format** as `ORBvoc.txt` — it is simply passed as the vocabulary argument.
+
+```bash
+# Build the tool
+cd build && ninja akaze_vocab_trainer
+
+# Train a ~1M-word vocabulary from one or more image directories (scanned recursively)
+./localization_service/tools/akaze_vocab_trainer \
+    --out Vocabulary/AKAZEvoc.txt \
+    -k 10 -L 6 \
+    --descriptor-size 256 --threshold 0.001 --noctaves 4 --nlayers 4 --nfeatures 1500 \
+    /path/to/images [/more/images ...]
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--out <file>` | `AKAZEvoc.txt` | Output vocabulary (DBoW2 text format). |
+| `-k <int>` | `10` | Tree branching factor. |
+| `-L <int>` | `6` | Tree depth (`k^L` leaf words; `10^6` ≈ 1M, matching `ORBvoc.txt`). Use `-L 5` for a faster, smaller (~100k-word) vocabulary. |
+| `--descriptor-size <bits>` | `256` | AKAZE M-LDB size; must match the runtime `AKAZE.descriptorSize`. |
+| `--threshold <f>` | `0.001` | AKAZE detector threshold; must match runtime. |
+| `--noctaves` / `--nlayers` | `4` / `4` | AKAZE scale-space; must match runtime. |
+| `--nfeatures <int>` | `1500` | Per-image keypoint cap. |
+| `--stride <int>` | `1` | Use every *N*th image (subsample video frames — consecutive frames are near-duplicates). |
+| `--max-images <int>` | `0` (all) | Stop after this many images. |
+| `--max-dim <int>` | `0` (off) | Downscale so the longer image side ≤ this. Set to your runtime processing width (e.g. `640`) so the training descriptor scale matches the tracker. |
+
+Notes:
+
+- **Match the runtime config.** The AKAZE parameters above must equal the `AKAZE.*` keys in the YAML used at run time, or the vocabulary will not match the descriptors the tracker produces.
+- **Diversity beats quantity** for a general-purpose vocabulary. A good mix of indoor and outdoor imagery (e.g. the [Places365](http://places2.csail.mit.edu/) validation set, ~36k images) generalizes broadly. A vocabulary trained only on your own environment is domain-specific and can bias relocalization tests run in that same space.
+- **Memory.** All descriptors are held in RAM during training; use `--stride` / `--max-images` to bound it.
+- The raw `.txt` vocabulary is large (~145 MB for 1M words); ship it compressed like `ORBvoc.txt.tar.gz`.
+
 ## Project structure
 
 ```
@@ -449,12 +508,15 @@ localization_service/
   tools/
     osa_convert.cc                — C++ source for OSA ↔ JSON converter
     osa_convert                   — built binary (OSA ↔ JSON CLI)
+    akaze_vocab_trainer.cc        — C++ source for the AKAZE DBoW2 vocabulary trainer
+    akaze_vocab_trainer           — built binary (trains Vocabulary/AKAZEvoc.txt)
     osa_file.py                   — Python module for reading/writing OSA files
     tello_camera_server.py        — relay server for Tello drone camera
     send_camera_frames.py         — forward a local camera to the frame ingest API
     record_frames.py              — record frames to disk for offline processing
     replay_frames.py              — replay recorded frames into the ingest API
-  example.yaml                    — sample camera configuration
+  example.yaml                    — sample camera configuration (ORB)
+  example_akaze.yaml              — sample camera configuration (AKAZE feature type)
 
 Thirdparty/orblsammer_espnode/
   src/

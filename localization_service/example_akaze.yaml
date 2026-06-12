@@ -1,0 +1,109 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# AKAZE feature variant of example.yaml.
+#
+# Identical to example.yaml except that the feature detector/descriptor is AKAZE
+# instead of ORB. Launch with the matching AKAZE vocabulary:
+#
+#   ./localization_service/localization_service_host \
+#       Vocabulary/AKAZEvoc.txt  localization_service/example_akaze.yaml  <source>
+#
+# A map built with AKAZE can only be localized with an AKAZE vocabulary, and the
+# AKAZE.* parameters below MUST match the ones the vocabulary was trained with
+# (see localization_service/tools/akaze_vocab_trainer).
+#--------------------------------------------------------------------------------------------
+File.version: "1.0"
+
+loopClosing: 1
+
+# Merge detection thresholds for map merging via loop closing.
+mergeMinBoWMatches:    10
+mergeMinBoWInliers:     7
+mergeMinSim3Inliers:   20
+mergeMinProjMatches:   50
+mergeMinProjOptMatches: 80
+
+#Camera.type: "KannalaBrandt8"
+Camera.type: "PinHole"
+
+# Camera calibration and distortion parameters (OpenCV)
+Camera1.fx: 867.20
+Camera1.fy: 867.20
+Camera1.cx: 643.13
+Camera1.cy: 479.49
+
+Camera1.k1: 0.0
+Camera1.k2: 0.0
+Camera1.k3: 0.0
+Camera1.k4: 0.0
+Camera1.p1: 0.0
+Camera1.p2: 0.0
+
+# Camera resolution
+Camera.width: 1280
+Camera.height: 960
+Camera.targetWidth: 640
+Camera.targetHeight: 480
+
+# Camera frames per second
+Camera.fps: 20
+
+# Color order of the images (0: BGR, 1: RGB. It is ignored if images are grayscale)
+Camera.RGB: 1
+
+#--------------------------------------------------------------------------------------------
+# Image Preprocessing (applied to every frame before tracking)
+#--------------------------------------------------------------------------------------------
+# Use the SAME preprocessing for mapping and localization so descriptors stay consistent.
+Preproc.clahe: 1            # 0 = off, 1 = on
+Preproc.claheClipLimit: 2.0
+Preproc.claheTileSize: 8
+
+#--------------------------------------------------------------------------------------------
+# Tracking Parameters
+#--------------------------------------------------------------------------------------------
+Tracking.minInitMatches: 50
+Tracking.forcedPoseMinBaseline: 0.08
+
+#--------------------------------------------------------------------------------------------
+# Feature type selection
+#--------------------------------------------------------------------------------------------
+# Feature.type selects the feature detector/descriptor. One uniform type per map.
+#   "ORB"   (default) — pass Vocabulary/ORBvoc.txt
+#   "AKAZE"           — pass Vocabulary/AKAZEvoc.txt
+Feature.type: "AKAZE"
+
+# AKAZE detector parameters. descriptorSize 256 (32-byte M-LDB) keeps the
+# descriptor ORB-compatible so the standard DBoW2 vocabulary format is reused.
+# These MUST match the values the AKAZE vocabulary was trained with.
+AKAZE.threshold: 0.001       # detector response threshold (lower = more features)
+AKAZE.descriptorSize: 256    # M-LDB size in bits (256 => 32 bytes; 0 => full 486-bit)
+AKAZE.nOctaves: 4
+AKAZE.nOctaveLayers: 4
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+# Used by the ORB extractor when Feature.type is "ORB". With Feature.type "AKAZE",
+# ORBextractor.nFeatures is still read and acts as the per-image keypoint cap
+# (strongest N kept); the remaining ORB-only keys are ignored.
+ORBextractor.nFeatures: 1500
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -3.5
+Viewer.ViewpointF: 500.0

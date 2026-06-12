@@ -27,8 +27,10 @@ ORB_SLAM3/
 │   ├── Map.h                - Single map instance (includes GL/glew.h fallback)
 │   ├── MapDrawer.h          - 3D map visualization (Pangolin-wrapped)
 │   ├── MapPoint.h           - 3D point in map
-│   ├── ORBextractor.h       - ORB feature extractor
-│   ├── ORBmatcher.h         - ORB feature matcher
+│   ├── ORBextractor.h       - ORB feature extractor (implements FeatureExtractor)
+│   ├── FeatureExtractor.h   - Abstract feature extractor interface + FeatureType enum + factory
+│   ├── AkazeExtractor.h     - AKAZE feature extractor (implements FeatureExtractor)
+│   ├── ORBmatcher.h         - Feature matcher (DescriptorDistance generalized to any binary length)
 │   ├── Optimizer.h          - G2O-based pose and map optimizers
 │   ├── Settings.h           - Settings file loader
 │   ├── System.h             - Main SLAM system interface (+ ForceRelocalization, GetAtlas)
@@ -52,6 +54,8 @@ ORB_SLAM3/
 │   ├── MapPoint.cc          - Map point implementation
 │   ├── Optimizer.cc         - G2O optimizer
 │   ├── ORBextractor.cc      - ORB feature extraction
+│   ├── FeatureExtractor.cc  - Feature extractor factory + FeatureType helpers
+│   ├── AkazeExtractor.cc    - AKAZE feature extraction
 │   ├── ORBmatcher.cc        - Feature matching
 │   ├── Settings.cc          - Settings parsing
 │   ├── System.cc            - System entry point (Pangolin removed, ForceRelocalization)
@@ -92,8 +96,11 @@ ORB_SLAM3/
 │   │   ├── replay_frames.py       - Replay recorded frames into the ingest API
 │   │   ├── osa_convert.cc         - [CUSTOM] C++ CLI: dump/pack OSA ↔ JSON
 │   │   ├── osa_convert            - [BUILT EXECUTABLE]
-│   │   └── osa_file.py            - [CUSTOM] Python module: read/write OSA atlas files
-│   └── example.yaml         - Example camera configuration
+│   │   ├── osa_file.py            - [CUSTOM] Python module: read/write OSA atlas files
+│   │   ├── akaze_vocab_trainer.cc - [CUSTOM] C++ CLI: train an AKAZE DBoW2 vocabulary
+│   │   └── akaze_vocab_trainer    - [BUILT EXECUTABLE]
+│   ├── example.yaml         - Example camera configuration (ORB)
+│   └── example_akaze.yaml   - Example camera configuration (AKAZE feature type)
 │
 ├── Examples/                - Active examples (only monocular built by modified CMake)
 │   ├── Monocular/
@@ -147,7 +154,7 @@ An `.osa` file is a **Boost binary archive** produced by `boost::archive::binary
 
 1. `std::string vocabName` — vocabulary filename (e.g. `"ORBvoc.txt"`)
 2. `std::string vocabChecksum` — MD5/SHA of the vocabulary
-3. `Atlas* mpAtlas` — pointer-serialized via `boost::serialization`; the Atlas recursively serializes its Maps, KeyFrames, and MapPoints using `PreSave`/`PostLoad` pointer-to-ID transformations
+3. `Atlas* mpAtlas` — pointer-serialized via `boost::serialization`; the Atlas recursively serializes its Maps, KeyFrames, and MapPoints using `PreSave`/`PostLoad` pointer-to-ID transformations. Atlas serialization is at `BOOST_CLASS_VERSION 1`, which adds an `mnFeatureType` field (0=ORB, 1=AKAZE, 2=SIFT); `version 0` archives (pre-swappable-features) load as ORB. Descriptors are stored width-agnostically, so ORB (32-byte) and AKAZE (32- or 61-byte) round-trip through the same code.
 
 All major classes use `template<class Archive> void serialize(Archive&, unsigned int)`. Key serialization utilities live in `include/SerializationUtils.h` (`serializeSophusSE3`, `serializeMatrix`, `serializeVectorKeyPoints`).
 
@@ -299,6 +306,7 @@ When activated via `SLAM.ActivateLocalizationMode()`:
 
 ### 5. Configuration & Settings
 - **Loop Closing Toggle:** Added support for a `loopClosing` flag in the YAML settings file to enable/disable the Loop Closing thread.
+- **Swappable feature extractor:** New `Feature.type` YAML key (`ORB` | `AKAZE`) selects the feature detector/descriptor for the whole atlas. See the dedicated subsection below.
 - **Image Scaling:** Improved handling of image scaling in the examples to match the SLAM system's expectations.
 - **Target Processing Resolution (dynamic scaling):** New `Camera.targetWidth` / `Camera.targetHeight` YAML keys. When set, incoming frames of any resolution are uniformly scaled to the target *inside* `Tracking::GrabImageMonocular`, so the service can accept different cameras without per-camera tuning. Works with both config formats. See below.
 
@@ -333,6 +341,49 @@ An extensible, ordered image preprocessing pipeline in the host (`localization_s
 - **CLAHE** (`ClaheStep`) is the first step: `Preproc.clahe` (0/1), `Preproc.claheClipLimit` (default 2.0), `Preproc.claheTileSize` (default 8). Colour frames get CLAHE on the LAB **L channel** (colour preserved); grayscale is equalized directly. Default is **off** unless `Preproc.clahe: 1`, so existing YAMLs are unaffected.
 - **Adding a step later:** implement a `PreprocessStep` subclass in `preprocessor.cc`, then read its `Preproc.*` keys and append it in `fromSettingsFile()` at the desired pipeline position. Add the new `.cc` only if split out; `preprocessor.cc` is already in the `CMakeLists.txt` host target.
 - Caveat: preprocessing alters pixel intensities and therefore descriptors — a map built with a given pipeline must be localized with the same pipeline.
+
+#### Swappable feature extractor (`Feature.type`: `ORB` | `AKAZE`)
+
+The feature detector/descriptor is selectable behind a `FeatureExtractor` interface. An atlas uses **one uniform feature type**; it is chosen in the YAML and recorded in the serialized atlas, so a map is always localized with the type it was built with.
+
+**Architecture:**
+- `FeatureExtractor` (`include/FeatureExtractor.h`) is the abstract base: `operator()` (extract keypoints + descriptors), the scale-pyramid getters Frame consumes, `GetType()`, and the shared `mvImagePyramid` (used only by stereo matching). `ORBextractor` and `AkazeExtractor` implement it. `CreateFeatureExtractor(type, …)` (in `src/FeatureExtractor.cc`) is the factory; `FeatureTypeFromString` / `FeatureTypeName` parse/print the type.
+- `Frame` and `Tracking` hold `FeatureExtractor*` (not `ORBextractor*`); extractors are built via the factory in **both** config paths (`newParameterLoader` and `ParseORBParamFile`). `Tracking` reads `Feature.type` and the `AKAZE.*` keys near the top of its constructor (so they apply to both config formats) and exposes `GetFeatureType()`.
+- `ORBmatcher::DescriptorDistance` is generalized to **arbitrary binary length** (a `cols/4` int32 fast path + trailing-byte popcount). ORB (32 bytes) is bit-identical to before; AKAZE works at any byte length. It is a **Hamming** metric — only valid for binary descriptors (ORB, AKAZE-MLDB).
+- **Serialization:** `Atlas` stores `mnFeatureType` (0=ORB, 1=AKAZE, 2=SIFT), serialized under `BOOST_CLASS_VERSION(Atlas, 1)`. Pre-versioning (`version 0`) `.osa` files load as ORB automatically. `System` sets the type from config when mapping and **errors on a config/atlas mismatch** when loading.
+
+**AKAZE (`AkazeExtractor`):**
+- Wraps `cv::AKAZE` with M-LDB descriptors. By default `AKAZE.descriptorSize: 256` → **32-byte** descriptors that are byte-compatible with ORB, so the DBoW2 `FORB` class and the entire `ORBVocabulary` / Bag-of-Words pipeline are reused unchanged — an AKAZE vocabulary is just a differently trained vocabulary file of the **same type** and format (no vocabulary-type refactor). `descriptorSize: 0` selects the full 486-bit (61-byte) descriptor.
+- **Scale model:** cv::AKAZE reports `keypoint.octave` in `[0, nOctaves)` with the feature scale doubling each octave, so the extractor is exposed as an `nOctaves`-level pyramid with `scaleFactor = 2.0`; the octave field is already a valid level index (no scale-space remapping). Sub-octave layers (`nOctaveLayers`) raise detection density but are collapsed onto their octave for the SLAM scale model.
+- Honors the mono/stereo lapping-area split of `operator()` (returns `monoIndex`); caps to the strongest `ORBextractor.nFeatures` keypoints by response.
+- YAML keys: `AKAZE.threshold` (default 0.001), `AKAZE.descriptorSize` (256), `AKAZE.nOctaves` (4), `AKAZE.nOctaveLayers` (4). They **must match** the values the AKAZE vocabulary was trained with. See `localization_service/example_akaze.yaml`.
+
+**Run AKAZE:** pass the matching vocabulary (`Vocabulary/AKAZEvoc.txt`) and an AKAZE YAML:
+```bash
+./localization_service/localization_service_host \
+    Vocabulary/AKAZEvoc.txt localization_service/example_akaze.yaml <source>
+```
+
+**Caveats:**
+- The matcher thresholds `ORBmatcher::TH_LOW` / `TH_HIGH` (50 / 100) are tuned for 256-bit Hamming. AKAZE at 256-bit reuses them directly; a different `descriptorSize` may want different thresholds.
+- SIFT (float / L2) is **not** implemented — it needs an L2 metric path in `ORBmatcher` and a float vocabulary class, which the 256-bit AKAZE approach deliberately avoids.
+
+#### AKAZE vocabulary trainer (`localization_service/tools/akaze_vocab_trainer.cc`)
+
+Trains a DBoW2 vocabulary from AKAZE-256 descriptors, in the same text format as `ORBvoc.txt`. It reuses `AkazeExtractor` (via the factory) so training and runtime configs cannot drift. Build with `cd build && ninja akaze_vocab_trainer`.
+
+```bash
+./localization_service/tools/akaze_vocab_trainer \
+    --out Vocabulary/AKAZEvoc.txt -k 10 -L 6 \
+    --descriptor-size 256 --threshold 0.001 --noctaves 4 --nlayers 4 --nfeatures 1500 \
+    <imageDir> [<imageDir> ...]
+```
+
+- Image dirs are scanned **recursively** (`cv::glob`) for `.jpg/.jpeg/.png/.bmp`. Options: `--stride N` (subsample video frames), `--max-images N`, `--max-dim N` (downscale longer side to match the runtime processing width, e.g. 640).
+- `-k`/`-L` set the tree (`10`/`6` ≈ 1M words, matching `ORBvoc.txt`; `-L 5` ≈ 100k for faster iteration).
+- The AKAZE params **must match** the runtime YAML.
+- All descriptors are held in RAM during training (`vector<vector<cv::Mat>>`); use `--stride`/`--max-images` to bound memory. The raw `.txt` is large (~145 MB for 1M words) — ship it compressed (`AKAZEvoc.txt.tar.gz`) like `ORBvoc.txt.tar.gz`.
+- A general-purpose vocabulary benefits from diverse indoor+outdoor imagery (e.g. the Places365 validation set); a vocabulary trained only on the deployment environment is domain-specific and can bias relocalization tests run in that same space.
 
 ## Technical Details
 
