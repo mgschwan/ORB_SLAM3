@@ -411,6 +411,16 @@ ORBVocabulary* Atlas::GetORBVocabulary()
     return mpORBVocabulary;
 }
 
+void Atlas::SetFeatureType(int t)
+{
+    mnFeatureType = t;
+}
+
+int Atlas::GetFeatureType()
+{
+    return mnFeatureType;
+}
+
 long unsigned int Atlas::GetNumLivedKF()
 {
     std::unique_lock<std::recursive_mutex> lock(mMutexAtlas);

@@ -112,6 +112,9 @@ public:
 
     float GetImageScale();
 
+    // Feature/descriptor type selected from the `Feature.type` YAML key.
+    FeatureType GetFeatureType() const { return mFeatureType; }
+
     // Target-resolution downscaling: returns the configured internal processing
     // resolution (0,0 if disabled). See ParseCamParamFile / GrabImageMonocular.
     void GetTargetSize(int &w, int &h);
@@ -312,9 +315,10 @@ protected:
     LocalMapping* mpLocalMapper;
     LoopClosing* mpLoopClosing;
 
-    //ORB
-    ORBextractor* mpORBextractorLeft, *mpORBextractorRight;
-    ORBextractor* mpIniORBextractor;
+    //Feature extractor (ORB / AKAZE / SIFT, selected via Feature.type)
+    FeatureExtractor* mpORBextractorLeft, *mpORBextractorRight;
+    FeatureExtractor* mpIniORBextractor;
+    FeatureType mFeatureType;
 
     //BoW
     ORBVocabulary* mpORBVocabulary;

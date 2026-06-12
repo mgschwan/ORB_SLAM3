@@ -23,6 +23,8 @@
 #include <list>
 #include <opencv2/opencv.hpp>
 
+#include "FeatureExtractor.h"
+
 
 namespace ORB_SLAM3
 {
@@ -40,10 +42,10 @@ public:
     bool bNoMore;
 };
 
-class ORBextractor
+class ORBextractor : public FeatureExtractor
 {
 public:
-    
+
     enum {HARRIS_SCORE=0, FAST_SCORE=1 };
 
     ORBextractor(int nfeatures, float scaleFactor, int nlevels,
@@ -56,31 +58,33 @@ public:
     // Mask is ignored in the current implementation.
     int operator()( cv::InputArray _image, cv::InputArray _mask,
                     std::vector<cv::KeyPoint>& _keypoints,
-                    cv::OutputArray _descriptors, std::vector<int> &vLappingArea);
+                    cv::OutputArray _descriptors, std::vector<int> &vLappingArea) override;
 
-    int inline GetLevels(){
+    int inline GetLevels() override {
         return nlevels;}
 
-    float inline GetScaleFactor(){
+    float inline GetScaleFactor() override {
         return scaleFactor;}
 
-    std::vector<float> inline GetScaleFactors(){
+    std::vector<float> inline GetScaleFactors() override {
         return mvScaleFactor;
     }
 
-    std::vector<float> inline GetInverseScaleFactors(){
+    std::vector<float> inline GetInverseScaleFactors() override {
         return mvInvScaleFactor;
     }
 
-    std::vector<float> inline GetScaleSigmaSquares(){
+    std::vector<float> inline GetScaleSigmaSquares() override {
         return mvLevelSigma2;
     }
 
-    std::vector<float> inline GetInverseScaleSigmaSquares(){
+    std::vector<float> inline GetInverseScaleSigmaSquares() override {
         return mvInvLevelSigma2;
     }
 
-    std::vector<cv::Mat> mvImagePyramid;
+    FeatureType GetType() const override { return FeatureType::ORB; }
+
+    // mvImagePyramid is inherited from FeatureExtractor.
 
 protected:
 

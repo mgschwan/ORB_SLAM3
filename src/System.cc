@@ -209,6 +209,25 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     mpTracker = new Tracking(this, mpVocabulary, mpFrameDrawer, mpMapDrawer,
                              mpAtlas, mpKeyFrameDatabase, strSettingsFile, mSensor, settings_, strSequence);
 
+    // Record / validate the feature type on the atlas. For a fresh (mapping)
+    // atlas the configured type is authoritative; for a loaded atlas the
+    // serialized type wins and a mismatch with the config is a hard error
+    // (the map can only be localized with the feature type it was built with).
+    {
+        int cfgFeatureType = static_cast<int>(mpTracker->GetFeatureType());
+        if(mStrLoadAtlasFromFile.empty())
+        {
+            mpAtlas->SetFeatureType(cfgFeatureType);
+        }
+        else if(mpAtlas->GetFeatureType() != cfgFeatureType)
+        {
+            cerr << "ERROR: loaded atlas was built with feature type "
+                 << mpAtlas->GetFeatureType() << " but the config requests "
+                 << cfgFeatureType << " (" << FeatureTypeName(mpTracker->GetFeatureType())
+                 << "). They must match." << endl;
+        }
+    }
+
     //Initialize the Local Mapping thread and launch
     mpLocalMapper = new LocalMapping(this, mpAtlas, mSensor==MONOCULAR || mSensor==IMU_MONOCULAR,
                                      mSensor==IMU_MONOCULAR || mSensor==IMU_STEREO || mSensor==IMU_RGBD, strSequence);

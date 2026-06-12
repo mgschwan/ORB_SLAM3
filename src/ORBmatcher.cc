@@ -2055,19 +2055,36 @@ namespace ORB_SLAM3
 
 // Bit set count operation from
 // http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
+    // Hamming distance between two binary descriptors of arbitrary length.
+    // ORB descriptors are 32 bytes (8 int32 words) and take the fast word path
+    // exactly as before; AKAZE M-LDB descriptors may have a byte length that is
+    // not a multiple of 4, so any trailing bytes are counted individually.
+    // NOTE: this is a Hamming metric and is only valid for binary descriptors
+    // (ORB, AKAZE-MLDB). Float descriptors (SIFT, L2) require a separate metric.
     int ORBmatcher::DescriptorDistance(const cv::Mat &a, const cv::Mat &b)
     {
+        const int nwords = a.cols / 4;       // full int32 words (ORB: 8)
+        const int remBytes = a.cols - nwords * 4;
+
         const int *pa = a.ptr<int32_t>();
         const int *pb = b.ptr<int32_t>();
 
         int dist=0;
 
-        for(int i=0; i<8; i++, pa++, pb++)
+        for(int i=0; i<nwords; i++, pa++, pb++)
         {
             unsigned  int v = *pa ^ *pb;
             v = v - ((v >> 1) & 0x55555555);
             v = (v & 0x33333333) + ((v >> 2) & 0x33333333);
             dist += (((v + (v >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24;
+        }
+
+        if(remBytes > 0)
+        {
+            const uchar *qa = a.ptr<uchar>() + nwords * 4;
+            const uchar *qb = b.ptr<uchar>() + nwords * 4;
+            for(int i=0; i<remBytes; i++)
+                dist += __builtin_popcount(static_cast<unsigned>(qa[i] ^ qb[i]));
         }
 
         return dist;

@@ -30,6 +30,7 @@
 #include <mutex>
 #include <boost/serialization/vector.hpp>
 #include <boost/serialization/export.hpp>
+#include <boost/serialization/version.hpp>
 
 
 namespace ORB_SLAM3
@@ -67,6 +68,11 @@ class Atlas
         ar & MapPoint::nNextId;
         ar & GeometricCamera::nNextId;
         ar & mnLastInitKFidMap;
+        // version >= 1: feature/descriptor type used to build every map in this
+        // atlas (0=ORB, 1=AKAZE, 2=SIFT). Older archives (version 0) have no
+        // field and default to ORB via mnFeatureType's constructor value.
+        if(version >= 1)
+            ar & mnFeatureType;
     }
 
 public:
@@ -135,6 +141,12 @@ public:
     void SetORBVocabulary(ORBVocabulary* pORBVoc);
     ORBVocabulary* GetORBVocabulary();
 
+    // Feature/descriptor type for this atlas (0=ORB, 1=AKAZE, 2=SIFT).
+    // Uniform across all maps; set from config when mapping, read from the
+    // archive when loading. See FeatureExtractor.h / FeatureType.
+    void SetFeatureType(int t);
+    int GetFeatureType();
+
     long unsigned int GetNumLivedKF();
 
     long unsigned int GetNumLivedMP();
@@ -155,6 +167,10 @@ protected:
 
     unsigned long int mnLastInitKFidMap;
 
+    // Feature/descriptor type (0=ORB, 1=AKAZE, 2=SIFT). Defaults to ORB so that
+    // pre-versioning archives and freshly constructed atlases are ORB.
+    int mnFeatureType = 0;
+
     Viewer* mpViewer;
     bool mHasViewer;
 
@@ -169,5 +185,9 @@ protected:
 }; // class Atlas
 
 } // namespace ORB_SLAM3
+
+// Atlas serialization version 1 adds the feature-type field. Version 0 archives
+// (built before swappable features) load with mnFeatureType defaulting to ORB.
+BOOST_CLASS_VERSION(ORB_SLAM3::Atlas, 1)
 
 #endif // ATLAS_H
