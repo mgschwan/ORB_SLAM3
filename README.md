@@ -293,6 +293,18 @@ When `Feature.type` is `"AKAZE"`, `ORBextractor.nFeatures` is still read and act
     Vocabulary/AKAZEvoc.txt  localization_service/example_akaze.yaml  /dev/video0
 ```
 
+#### ORB extractor parameters
+
+Standard ORB-SLAM3 keys controlling the ORB feature extractor. They are read when `Feature.type` is `"ORB"` (the default); under `"AKAZE"` only `ORBextractor.nFeatures` is used (as the keypoint cap) and the rest are ignored.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `ORBextractor.nFeatures` | int | `1500` | Target number of features extracted per image. Higher = more matches and a denser map, at the cost of speed. |
+| `ORBextractor.scaleFactor` | float | `1.2` | Scale factor between consecutive levels of the image pyramid. |
+| `ORBextractor.nLevels` | int | `8` | Number of levels in the scale pyramid (multi-scale feature detection). |
+| `ORBextractor.iniThFAST` | int | `20` | Initial FAST corner threshold. The image is divided into a grid; in each cell, FAST corners are extracted at this minimum response. |
+| `ORBextractor.minThFAST` | int | `7` | Fallback FAST threshold used in a cell when `iniThFAST` finds no corners. Lower both thresholds if your images have low contrast. |
+
 #### Map creation behaviour
 
 | Key | Type | Default | Description |
