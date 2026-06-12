@@ -324,6 +324,7 @@ protected:
     float mAkazeThreshold;
     int mAkazeNOctaves;
     int mAkazeNOctaveLayers;
+    int mAkazeDescriptorSize;
 
     //BoW
     ORBVocabulary* mpORBVocabulary;

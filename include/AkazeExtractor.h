@@ -3,10 +3,16 @@
 *
 * AkazeExtractor: FeatureExtractor implementation backed by cv::AKAZE.
 *
-* AKAZE produces binary M-LDB descriptors (default 486 bits / 61 bytes) which
-* are compared with Hamming distance, exactly like ORB, so the existing
-* ORBmatcher::DescriptorDistance (generalized to arbitrary length) and the
-* matching pipeline are reused unchanged.
+* AKAZE produces binary M-LDB descriptors compared with Hamming distance,
+* exactly like ORB, so the existing ORBmatcher::DescriptorDistance (generalized
+* to arbitrary length) and the matching pipeline are reused unchanged.
+*
+* Descriptor width: by default we request a 256-bit (32-byte) M-LDB descriptor
+* (descriptorSize=256). At 32 bytes it is byte-compatible with ORB, so the DBoW2
+* FORB descriptor class and the whole ORBVocabulary / Bag-of-Words plumbing are
+* reused unchanged -- an AKAZE vocabulary is simply a differently trained
+* vocabulary file of the same type (see tools/akaze_vocab_trainer.cc). Passing
+* descriptorSize=0 selects AKAZE's full 486-bit (61-byte) descriptor instead.
 *
 * Scale model: cv::AKAZE reports keypoint.octave in [0, nOctaves) with the
 * feature scale (keypoint.size) doubling each octave. We therefore expose the
@@ -39,7 +45,10 @@ public:
     // nfeatures: cap on the number of (strongest) keypoints kept; <=0 means keep all.
     // threshold: AKAZE detector response threshold.
     // nOctaves / nOctaveLayers: AKAZE scale-space structure (nOctaves == #levels).
-    AkazeExtractor(int nfeatures, float threshold, int nOctaves, int nOctaveLayers);
+    // descriptorSize: M-LDB descriptor size in bits (256 => 32 bytes, ORB-compatible;
+    //                 0 => full 486-bit / 61-byte descriptor).
+    AkazeExtractor(int nfeatures, float threshold, int nOctaves, int nOctaveLayers,
+                   int descriptorSize = 256);
 
     ~AkazeExtractor() {}
 

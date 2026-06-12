@@ -15,7 +15,8 @@ using namespace std;
 namespace ORB_SLAM3
 {
 
-AkazeExtractor::AkazeExtractor(int nfeatures, float threshold, int nOctaves, int nOctaveLayers)
+AkazeExtractor::AkazeExtractor(int nfeatures, float threshold, int nOctaves, int nOctaveLayers,
+                               int descriptorSize)
     : mnFeatures(nfeatures), mnLevels(nOctaves), mfScaleFactor(2.0f)
 {
     if(mnLevels < 1)
@@ -23,8 +24,9 @@ AkazeExtractor::AkazeExtractor(int nfeatures, float threshold, int nOctaves, int
     if(nOctaveLayers < 1)
         nOctaveLayers = 1;
 
-    // DESCRIPTOR_MLDB, full size (0 => 486 bits / 61 bytes), 3 channels.
-    mpAkaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, 0, 3,
+    // DESCRIPTOR_MLDB, 3 channels. descriptorSize in bits: 256 => 32 bytes
+    // (ORB-compatible, reuses the ORB vocabulary type); 0 => full 486-bit.
+    mpAkaze = cv::AKAZE::create(cv::AKAZE::DESCRIPTOR_MLDB, descriptorSize, 3,
                                 threshold, mnLevels, nOctaveLayers);
 
     // Pyramid scale metadata: one level per octave, scale doubles each octave.

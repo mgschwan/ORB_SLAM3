@@ -159,6 +159,11 @@ add_executable(osa_convert
         localization_service/tools/osa_convert.cc)
 target_link_libraries(osa_convert ${PROJECT_NAME} -lGL -lboost_serialization)
 
+add_executable(akaze_vocab_trainer
+        localization_service/tools/akaze_vocab_trainer.cc)
+target_link_libraries(akaze_vocab_trainer ${PROJECT_NAME} -lGL
+        ${PROJECT_SOURCE_DIR}/Thirdparty/DBoW2/lib/libDBoW2.so)
+
 
 # Install targets for AppImage packaging
 # Set CMAKE_INSTALL_PREFIX to the AppDir path when building for AppImage:

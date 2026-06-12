@@ -69,7 +69,8 @@ FeatureExtractor* CreateFeatureExtractor(FeatureType type,
                                          int nlevels, int iniThFAST, int minThFAST,
                                          float akazeThreshold = 0.001f,
                                          int akazeNOctaves = 4,
-                                         int akazeNOctaveLayers = 4);
+                                         int akazeNOctaveLayers = 4,
+                                         int akazeDescriptorSize = 256);
 
 } // namespace ORB_SLAM3
 

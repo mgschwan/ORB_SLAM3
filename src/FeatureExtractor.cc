@@ -43,7 +43,8 @@ FeatureExtractor* CreateFeatureExtractor(FeatureType type,
                                          int nlevels, int iniThFAST, int minThFAST,
                                          float akazeThreshold,
                                          int akazeNOctaves,
-                                         int akazeNOctaveLayers)
+                                         int akazeNOctaveLayers,
+                                         int akazeDescriptorSize)
 {
     switch(type)
     {
@@ -51,7 +52,8 @@ FeatureExtractor* CreateFeatureExtractor(FeatureType type,
             return new ORBextractor(nfeatures, scaleFactor, nlevels, iniThFAST, minThFAST);
 
         case FeatureType::AKAZE:
-            return new AkazeExtractor(nfeatures, akazeThreshold, akazeNOctaves, akazeNOctaveLayers);
+            return new AkazeExtractor(nfeatures, akazeThreshold, akazeNOctaves,
+                                      akazeNOctaveLayers, akazeDescriptorSize);
 
         case FeatureType::SIFT:
         default:

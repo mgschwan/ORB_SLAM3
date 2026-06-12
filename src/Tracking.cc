@@ -65,6 +65,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mAkazeThreshold = 0.001f;
     mAkazeNOctaves = 4;
     mAkazeNOctaveLayers = 4;
+    mAkazeDescriptorSize = 256;
     {
         cv::FileStorage fFeatSettings(strSettingPath, cv::FileStorage::READ);
         if(fFeatSettings.isOpened())
@@ -82,13 +83,17 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
             cv::FileNode fnLay = fFeatSettings["AKAZE.nOctaveLayers"];
             if(!fnLay.empty() && fnLay.isInt())
                 mAkazeNOctaveLayers = (int)fnLay;
+            cv::FileNode fnDs = fFeatSettings["AKAZE.descriptorSize"];
+            if(!fnDs.empty() && fnDs.isInt())
+                mAkazeDescriptorSize = (int)fnDs;
         }
     }
     cout << "- Feature type: " << FeatureTypeName(mFeatureType) << endl;
     if(mFeatureType == FeatureType::AKAZE)
         cout << "- AKAZE: threshold=" << mAkazeThreshold
              << " nOctaves=" << mAkazeNOctaves
-             << " nOctaveLayers=" << mAkazeNOctaveLayers << endl;
+             << " nOctaveLayers=" << mAkazeNOctaveLayers
+             << " descriptorSize=" << mAkazeDescriptorSize << endl;
 
     // Load camera parameters from settings file
     if(settings){
@@ -636,13 +641,13 @@ void Tracking::newParameterLoader(Settings *settings) {
     int fMinThFAST = settings->minThFAST();
     float fScaleFactor = settings->scaleFactor();
 
-    mpORBextractorLeft = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
+    mpORBextractorLeft = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers,mAkazeDescriptorSize);
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
-        mpORBextractorRight = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
+        mpORBextractorRight = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers,mAkazeDescriptorSize);
 
     if(mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR)
-        mpIniORBextractor = CreateFeatureExtractor(mFeatureType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
+        mpIniORBextractor = CreateFeatureExtractor(mFeatureType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers,mAkazeDescriptorSize);
 
     //IMU parameters
     Sophus::SE3f Tbc = settings->Tbc();
@@ -1341,13 +1346,13 @@ bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
         return false;
     }
 
-    mpORBextractorLeft = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
+    mpORBextractorLeft = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers,mAkazeDescriptorSize);
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
-        mpORBextractorRight = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
+        mpORBextractorRight = CreateFeatureExtractor(mFeatureType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers,mAkazeDescriptorSize);
 
     if(mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR)
-        mpIniORBextractor = CreateFeatureExtractor(mFeatureType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers);
+        mpIniORBextractor = CreateFeatureExtractor(mFeatureType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mAkazeThreshold,mAkazeNOctaves,mAkazeNOctaveLayers,mAkazeDescriptorSize);
 
     cout << endl << "ORB Extractor Parameters: " << endl;
     cout << "- Number of Features: " << nFeatures << endl;
