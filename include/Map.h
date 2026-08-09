@@ -27,8 +27,6 @@
 
 #if MGSCHWAN_DISABLED
 #include <pangolin/pangolin.h>
-#else
-#include <GL/glew.h>
 #endif
 
 #include <mutex>
@@ -194,7 +192,9 @@ protected:
 
 
     // View of the map in aerial sight (for the AtlasViewer)
-    GLubyte* mThumbnail;
+    // Was GLubyte (an alias for unsigned char), which pulled in <GL/glew.h>
+    // purely for the typedef once the Pangolin viewer was disabled.
+    unsigned char* mThumbnail;
 
     bool mIsInUse;
     bool mHasTumbnail;
