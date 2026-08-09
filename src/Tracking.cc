@@ -2890,9 +2890,6 @@ void Tracking::CreateInitialMapMonocular()
     Sophus::SE3f Tc2w = pKFcur->GetPose();
     if(!mbForcedPoseInitialization)
     {
-        cout << "[INIT] scale normalization: medianDepth=" << medianDepth
-             << " invMedianDepth=" << invMedianDepth
-             << " MPs=" << mpAtlas->MapPointsInMap() << endl;
         Tc2w.translation() *= invMedianDepth;
         pKFcur->SetPose(Tc2w);
 

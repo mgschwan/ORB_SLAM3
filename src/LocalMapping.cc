@@ -155,14 +155,6 @@ void LocalMapping::Run()
                     {
                         Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA);
                         b_doneLBA = true;
-                        cout << "[LBA] KF=" << mpCurrentKeyFrame->mnId
-                             << " aborted=" << mbAbortBA
-                             << " fixedKF=" << num_FixedKF_BA
-                             << " optKF=" << num_OptKF_BA
-                             << " MPs=" << num_MPs_BA
-                             << " edges=" << num_edges_BA
-                             << " totalKFs=" << mpAtlas->KeyFramesInMap()
-                             << " totalMPs=" << mpAtlas->MapPointsInMap() << endl;
                     }
 
                 }
