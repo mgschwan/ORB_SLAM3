@@ -1,0 +1,40 @@
+# Noble (24.04) build environment for the ORBSlammer release AppImage.
+#
+# AppImageBuilder.yml deploys its runtime from noble (glibc 2.39).  Building on
+# a newer host produces binaries that require a newer glibc than the bundle can
+# supply - and because AppRun only engages its compat layer on hosts *older*
+# than the bundle, such a build fails even on 24.04.  Compiling here links
+# against 2.39 and matches the recipe.
+#
+# This image also runs the packaging step (see release_appimage.sh), for two
+# reasons: appimage-builder still requires apt-key, which recent Ubuntu no
+# longer ships, and appimage_build.sh's default GLIBC_LIB
+# (/lib/x86_64-linux-gnu) is the correct 2.39 tree in here.
+#
+# OpenCV 4.6 here is the same version the recipe bundles (libopencv-*406t64).
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# build-essential..nlohmann-json3-dev build ORB_SLAM3 itself;
+# gnupg..wget are appimage-builder's runtime requirements.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        ninja-build \
+        pkg-config \
+        libopencv-dev \
+        libeigen3-dev \
+        libboost-serialization-dev \
+        libssl-dev \
+        nlohmann-json3-dev \
+        ca-certificates \
+        gnupg \
+        squashfs-tools \
+        patchelf \
+        file \
+        zsync \
+        desktop-file-utils \
+        fakeroot \
+        wget \
+    && rm -rf /var/lib/apt/lists/*

@@ -101,4 +101,9 @@ appimage-build/
 .vscode/
 *.zsync
 
+# Release build (release_appimage.sh)
+build-noble/
+Thirdparty/*/build-noble/
+.release-work/
+
 datasets/*

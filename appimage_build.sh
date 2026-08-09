@@ -19,8 +19,12 @@
 # 2.39 bundle, which breaks on every machine that isn't 26.04.  GLIBC_LIB now
 # defaults to the host but is checked against the recipe below.
 #
-# For a release build, compile in a Noble container and point both variables at
-# it, so the binaries link against 2.39 and the glibc copies match:
+# Do not run this directly for a release - use ./release_appimage.sh, which
+# compiles and packages inside the Noble container.  In there the default
+# GLIBC_LIB is already the right 2.39 tree and the guard below passes.
+#
+# Running it on the host only works if the host *is* the release the recipe
+# targets; otherwise point GLIBC_LIB at a matching glibc tree, e.g.
 #
 #   docker create --name noble ubuntu:24.04
 #   docker cp noble:/usr/lib/x86_64-linux-gnu/libc.so.6            /tmp/noble-glibc/
