@@ -134,6 +134,12 @@ bool MapDrawer::ParseViewerParamFile(cv::FileStorage &fSettings)
     return !b_miss_params;
 }
 
+// Pangolin-viewer rendering.  Visualisation lives in the web server now, and
+// the only call sites (Viewer::Run) are themselves compiled out, so these are
+// guarded too - otherwise their raw GL calls force every executable to link
+// libGL, which the AppImage does not bundle.
+#if MGSCHWAN_DISABLED
+
 void MapDrawer::DrawMapPoints()
 {
     Map* pActiveMap = mpAtlas->GetCurrentMap();
@@ -396,6 +402,8 @@ void MapDrawer::DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const b
         }
     }
 }
+
+#endif
 
 #if MGSCHWAN_DISABLED
 

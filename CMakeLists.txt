@@ -147,24 +147,24 @@ add_executable(localization_service_host
         localization_service/src/web_server.cc)
 target_include_directories(localization_service_host PRIVATE
         localization_service/include)
-target_link_libraries(localization_service_host ${PROJECT_NAME} -lGL)
+target_link_libraries(localization_service_host ${PROJECT_NAME})
 
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Monocular)
 
 add_executable(inspect_osa
         Examples/Monocular/inspect_osa.cc)
-target_link_libraries(inspect_osa ${PROJECT_NAME} -lGL -lboost_serialization)
+target_link_libraries(inspect_osa ${PROJECT_NAME} -lboost_serialization)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/localization_service/tools)
 
 add_executable(osa_convert
         localization_service/tools/osa_convert.cc)
-target_link_libraries(osa_convert ${PROJECT_NAME} -lGL -lboost_serialization)
+target_link_libraries(osa_convert ${PROJECT_NAME} -lboost_serialization)
 
 add_executable(akaze_vocab_trainer
         localization_service/tools/akaze_vocab_trainer.cc)
-target_link_libraries(akaze_vocab_trainer ${PROJECT_NAME} -lGL
+target_link_libraries(akaze_vocab_trainer ${PROJECT_NAME}
         ${PROJECT_SOURCE_DIR}/Thirdparty/DBoW2/lib/libDBoW2.so)
 
 
