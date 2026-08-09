@@ -9,8 +9,11 @@ MESSAGE("Build type: " ${CMAKE_BUILD_TYPE})
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -Wall   -O0 -g")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall   -O0 -g -std=c++14")
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -march=native")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=native -std=c++14")
+# x86-64-v3 (AVX2/FMA/BMI2) rather than -march=native: native targets the build
+# machine's exact ISA, so a release AppImage built on a Zen 5 host emits AVX-512
+# and SIGILLs on any CPU without it.  v3 is safe on Haswell+/Zen1+.
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -march=x86-64-v3")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=x86-64-v3 -std=c++14")
 
 # Check C++11 or C++0x support
 include(CheckCXXCompilerFlag)
